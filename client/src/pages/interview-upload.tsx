@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { FileUpload } from '@/components/file-upload';
+import  FileUpload  from '@/components/file-upload';
 import { AIStatusBanner } from '@/components/ai-status-banner';
 import { startInterview } from '@/lib/api';
 import { useToast } from '@/hooks/use-toast';
