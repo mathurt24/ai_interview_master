@@ -1,5 +1,5 @@
 import React, { useState, useRef } from "react";
-import { CloudUpload, File, X } from 'lucide-react';
+import { Upload, File, X } from 'lucide-react';
 
 interface FileUploadProps {
   onFileSelect: (file: File) => void;
@@ -48,7 +48,7 @@ export default function FileUpload({
           onDrop={handleDrop}
           onClick={() => fileInputRef.current?.click()}
         >
-          <CloudUpload className="h-6 w-6" />
+          <Upload className="h-6 w-6" />
           <p className="text-gray-600">Drag & drop your file here, or click to browse</p>
           <input
             type="file"
