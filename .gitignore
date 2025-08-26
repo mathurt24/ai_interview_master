@@ -107,3 +107,4 @@ uploads/
 # Replit specific
 .replit
 replit.nix
+.vercel
