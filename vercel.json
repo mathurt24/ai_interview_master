@@ -4,47 +4,15 @@
   "outputDirectory": "dist/public",
   "installCommand": "npm install --legacy-peer-deps && cd client && npm install --legacy-peer-deps",
   "framework": "vite",
-  "headers": [
-    {
-      "source": "/assets/(.*)",
-      "headers": [
-        {
-          "key": "Content-Type",
-          "value": "application/javascript"
-        }
-      ]
-    },
-    {
-      "source": "/(.*).js",
-      "headers": [
-        {
-          "key": "Content-Type",
-          "value": "application/javascript"
-        }
-      ]
-    },
-    {
-      "source": "/(.*).css",
-      "headers": [
-        {
-          "key": "Content-Type",
-          "value": "text/css"
-        }
-      ]
+  "functions": {
+    "server/index.ts": {
+      "runtime": "nodejs22.x"
     }
-  ],
+  },
   "rewrites": [
     {
-      "source": "/assets/(.*)",
-      "destination": "/assets/$1"
-    },
-    {
-      "source": "/(.*).js",
-      "destination": "/$1.js"
-    },
-    {
-      "source": "/(.*).css",
-      "destination": "/$1.css"
+      "source": "/api/(.*)",
+      "destination": "/server/index.ts"
     },
     {
       "source": "/(.*)",

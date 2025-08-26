@@ -453,9 +453,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Update login endpoint to block disqualified candidates
   app.post("/api/auth/login", async (req, res) => {
-    const { email, password } = req.body;
     // Check for disqualified candidate before try/catch
-    const candidatesWithEmail = await storage.findCandidatesByEmail(email);
+    const candidatesWithEmail = await storage.findCandidatesByEmail(req.body.email);
     if (candidatesWithEmail && candidatesWithEmail[0]?.disqualified) {
       return res.status(403).json({ message: "Interview cancelled due to disciplinary action." });
     }
