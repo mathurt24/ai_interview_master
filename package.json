@@ -30,7 +30,7 @@
     "openai": "^4.20.1",
 
     "postgres": "^3.4.4",
-    "unpdf": "^0.0.8",
+    "unpdf": "^1.2.2",
     "zod": "^3.25.76"
   },
   "devDependencies": {
