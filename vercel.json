@@ -5,9 +5,7 @@
   "installCommand": "npm install --legacy-peer-deps && cd client && npm install --legacy-peer-deps",
   "framework": "vite",
   "functions": {
-    "server/index.ts": {
-      "runtime": "nodejs22.x"
-    }
+    "server/index.ts": {}
   },
   "rewrites": [
     {
