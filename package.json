@@ -1,51 +1,52 @@
 {
+  "type": "module",
   "name": "ai-interview-master",
   "version": "1.0.0",
-  "description": "AI-powered interview platform with resume analysis and real-time evaluation",
   "main": "server/index.ts",
   "scripts": {
-    "dev": "NODE_ENV=development tsx server/index.ts",
+    "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
+    "dev:server": "NODE_ENV=development tsx server/index.ts",
+    "dev:client": "cd client && npm run dev",
     "build": "npm run build:client && npm run build:server",
-    "build:client": "cd client && npm install --legacy-peer-deps && npm run build",
-    "build:server": "tsc server/index.ts --outDir dist/server --target es2020 --module commonjs",
+    "build:client": "cd client && npm run build",
+    "build:server": "tsc server/index.ts --outDir dist/server --target es2020 --module esnext",
     "start": "NODE_ENV=production node dist/server/index.js",
-    "vercel-build": "npm run build",
-    "db:push": "npx drizzle-kit push",
-    "db:generate": "npx drizzle-kit generate",
-    "db:migrate": "npx drizzle-kit migrate",
-    "install-deps": "npm install --legacy-peer-deps",
-    "postinstall": "cd client && npm install --legacy-peer-deps"
+    "vercel-build": "npm run build"
   },
   "dependencies": {
-    "@types/express": "^4.17.21",
-    "@types/node": "^20.11.0",
-    "express": "^4.18.2",
+    "@sendgrid/mail": "^8.1.1",
+    "agora-access-token": "^2.0.4",
+    "bcrypt": "^5.1.1",
+    "bcryptjs": "^3.0.2",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
-    "multer": "^1.4.5-lts.1",
-    "pdf-parse": "^1.1.1",
-    "openai": "^4.20.1",
     "drizzle-orm": "^0.44.3",
-    "postgres": "^3.4.3",
-    "nanoid": "^5.0.4",
-    "bcrypt": "^5.1.1",
+    "drizzle-zod": "^0.8.3",
+    "express": "^4.18.2",
     "jsonwebtoken": "^9.0.2",
-    "@sendgrid/mail": "^8.1.1",
-    "agora-rtc-sdk-ng": "^4.20.0"
+    "multer": "^1.4.5-lts.1",
+    "nanoid": "^5.0.4",
+    "openai": "^4.20.1",
+
+    "postgres": "^3.4.3",
+    "unpdf": "^1.2.2",
+    "zod": "^4.1.3"
   },
   "devDependencies": {
-    "tsx": "^4.7.0",
-    "typescript": "^5.3.3",
-    "drizzle-kit": "^0.20.9",
-    "@types/cors": "^2.8.17",
-    "@types/multer": "^1.4.11",
+    "@replit/vite-plugin-runtime-error-modal": "^0.0.3",
     "@types/bcrypt": "^5.0.2",
-    "@types/jsonwebtoken": "^9.0.5"
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/jsonwebtoken": "^9.0.5",
+    "@types/multer": "^1.4.11",
+    "@types/node": "^20.11.0",
+    "@vitejs/plugin-react": "^5.0.1",
+    "concurrently": "^8.2.2",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.3"
   },
   "engines": {
-    "node": ">=18.0.0"
-  },
-  "overrides": {
-    "@types/react": "^18.2.0"
+    "node": "18.x"
   }
 }

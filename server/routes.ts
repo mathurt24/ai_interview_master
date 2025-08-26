@@ -7,7 +7,6 @@ import { generateInterviewQuestions, evaluateAnswer, generateFinalSummary } from
 import { insertCandidateSchema, insertAnswerSchema, insertUserSchema } from "@shared/schema";
 import { emailService } from "./services/email-service";
 import { z } from "zod";
-import pdfParse from 'pdf-parse';
 import { RtcTokenBuilder } from 'agora-access-token';
 import { generateTTS } from "./services/tts";
 
@@ -33,96 +32,85 @@ async function extractTextFromFile(buffer: Buffer, mimetype: string, filename: s
     }
     if (mimetype === 'application/pdf') {
       try {
-        // Use dynamic import with a different approach
-        const pdfParse = await import('pdf-parse');
-        const data = await pdfParse.default(buffer);
-        console.log("PDF parsed successfully, extracted text length:", data.text.length);
-        return data.text;
+        // Try unpdf first for robust PDF text extraction
+        const unpdf = await import('unpdf');
+        if (unpdf && unpdf.extractText) {
+          try {
+            const result = await unpdf.extractText(buffer);
+            if (result && result.text && Array.isArray(result.text) && result.text.length > 0) {
+              const text = result.text.join(' ');
+              if (text.trim().length > 0) {
+                console.log("unpdf parsed successfully, extracted text length:", text.length);
+                return text;
+              }
+            }
+          } catch (extractError) {
+            console.log("unpdf extractText failed, trying fallback:", extractError);
+          }
+        }
+        // If unpdf returns empty/invalid text, return conservative minimal text (no fake examples)
+        console.warn("unpdf returned empty text; using conservative minimal text");
+        return `Resume extracted from ${filename}`;
       } catch (pdfError) {
-        console.error("PDF parsing failed, using fallback:", pdfError);
-        // Return a minimal fallback based on filename
-        return `Resume extracted from ${filename}
-
-PROFESSIONAL SUMMARY
-Experienced software developer with expertise in modern web technologies including React, Node.js, TypeScript, and cloud platforms. Strong background in building scalable applications and working in collaborative team environments.
-
-TECHNICAL SKILLS
-• Frontend: React, TypeScript, HTML5, CSS3, JavaScript (ES6+)
-• Backend: Node.js, Express.js, RESTful APIs, GraphQL
-• Databases: PostgreSQL, MongoDB, Redis
-• Cloud: AWS, Docker, Kubernetes
-• Tools: Git, Jest, Webpack, CI/CD pipelines
-
-WORK EXPERIENCE
-Senior Software Developer (2021-2024)
-Tech Company Inc.
-• Developed and maintained web applications using React and Node.js
-• Collaborated with cross-functional teams to deliver high-quality software solutions
-• Implemented automated testing and deployment processes
-• Mentored junior developers and conducted code reviews
-
-Software Developer (2019-2021)
-StartupTech LLC
-• Built responsive web applications with modern JavaScript frameworks
-• Worked with databases and API integrations
-• Participated in agile development processes
-• Contributed to technical documentation and best practices
-
-EDUCATION
-Bachelor of Science in Computer Science
-University Name (2015-2019)
-
-PROJECTS
-• E-commerce Platform: Full-stack web application with React frontend and Node.js backend
-• Task Management Tool: Real-time collaboration application using WebSocket technology
-• Mobile-First Website: Responsive design optimized for mobile devices
-
-Note: This is a processed version of the uploaded resume. The AI interview system will generate personalized questions based on this content.`;
+        console.error("PDF parsing failed with unpdf:", pdfError);
+        // Conservative fallback: do NOT inject fake emails/phones
+        return `Resume extracted from ${filename}`;
       }
     }
     
-    // For other file types (DOCX, etc.), return a realistic fallback
-    return `Resume extracted from ${filename}
-
-PROFESSIONAL SUMMARY
-Experienced software developer with expertise in modern web technologies including React, Node.js, TypeScript, and cloud platforms. Strong background in building scalable applications and working in collaborative team environments.
-
-TECHNICAL SKILLS
-• Frontend: React, TypeScript, HTML5, CSS3, JavaScript (ES6+)
-• Backend: Node.js, Express.js, RESTful APIs, GraphQL
-• Databases: PostgreSQL, MongoDB, Redis
-• Cloud: AWS, Docker, Kubernetes
-• Tools: Git, Jest, Webpack, CI/CD pipelines
-
-WORK EXPERIENCE
-Senior Software Developer (2021-2024)
-Tech Company Inc.
-• Developed and maintained web applications using React and Node.js
-• Collaborated with cross-functional teams to deliver high-quality software solutions
-• Implemented automated testing and deployment processes
-• Mentored junior developers and conducted code reviews
-
-Software Developer (2019-2021)
-StartupTech LLC
-• Built responsive web applications with modern JavaScript frameworks
-• Worked with databases and API integrations
-• Participated in agile development processes
-• Contributed to technical documentation and best practices
-
-EDUCATION
-Bachelor of Science in Computer Science
-University Name (2015-2019)
-
-PROJECTS
-• E-commerce Platform: Full-stack web application with React frontend and Node.js backend
-• Task Management Tool: Real-time collaboration application using WebSocket technology
-• Mobile-First Website: Responsive design optimized for mobile devices
-
-Note: This is a processed version of the uploaded resume. The AI interview system will generate personalized questions based on this content.`;
+    // For other file types (DOCX, etc.), conservative fallback
+    return `Resume extracted from ${filename}`;
   } catch (error) {
     console.error("Error extracting text from file:", error);
     return `Error processing file: ${error}`;
   }
+}
+
+// Utility: refine contact details from raw text/filename
+function refineContactFromText(rawText: string, filename?: string, current?: { name?: string; email?: string; phone?: string; }) {
+  const result: { name?: string; email?: string; phone?: string } = { ...current };
+
+  // Email regex (global)
+  const emailMatches = rawText.match(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g) || [];
+  const validEmails = emailMatches.filter(e => !/example\.com|test\.com|dummy\./i.test(e));
+  if (!result.email || result.email === 'Not specified' || /example\.com|test\.com|dummy\./i.test(result.email)) {
+    if (validEmails.length > 0) {
+      // Prefer emails that appear near the top of the document
+      const firstValid = validEmails[0];
+      result.email = firstValid;
+      console.log('Refined email from text:', result.email);
+    }
+  }
+
+  // Phone regex: capture +country codes and common separators, 10-15 digits total
+  const phoneMatches = rawText.match(/(?:(?:\+?\d{1,3}[\s.-]?)?(?:\(?\d{2,4}\)?[\s.-]?)?\d{3,4}[\s.-]?\d{3,4}[\s.-]?\d{0,4})/g) || [];
+  const normalized = (s: string) => (s || '').replace(/[^\d+]/g, '');
+  const plausiblePhones = phoneMatches
+    .map(p => p.trim())
+    .map(p => normalized(p))
+    .filter(p => /\d{10,15}/.test(p))
+    .filter(p => !/(?:555|123456|000000)/.test(p));
+  if (!result.phone || result.phone === 'Not specified') {
+    if (plausiblePhones.length > 0) {
+      // Prefer the first plausible
+      result.phone = plausiblePhones[0];
+      console.log('Refined phone from text:', result.phone);
+    }
+  }
+
+  // Name: if missing, try filename
+  if ((!result.name || result.name === 'Not specified') && filename) {
+    const base = filename.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').trim();
+    // Heuristic: pick up to first two capitalized words
+    const tokens = base.split(/\s+/).filter(Boolean);
+    if (tokens.length >= 2) {
+      const guess = tokens.slice(0, 2).map(t => t.charAt(0).toUpperCase() + t.slice(1)).join(' ');
+      result.name = guess;
+      console.log('Refined name from filename:', result.name);
+    }
+  }
+
+  return result;
 }
 
 // Helper function to extract candidate information from resume text
@@ -142,7 +130,16 @@ async function extractCandidateInfo(resumeText: string, filename?: string): Prom
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
       console.log("Gemini API key not found, using fallback extraction");
-      return await fallbackExtraction(resumeText, filename);
+      const base = await fallbackExtraction(resumeText, filename);
+      const refined = refineContactFromText(resumeText, filename, base);
+      return {
+        name: refined.name || base.name,
+        email: refined.email || base.email,
+        phone: refined.phone || base.phone,
+        designation: base.designation,
+        pastCompanies: base.pastCompanies,
+        skillset: base.skillset,
+      };
     }
 
     const prompt = `
@@ -187,10 +184,10 @@ ${resumeText}
 
     const rawBody = await response.text();
     console.log('Gemini extraction response:', rawBody);
-    
+
     const data = JSON.parse(rawBody);
     const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-    
+
     if (!text) {
       throw new Error('No response text from Gemini');
     }
@@ -205,7 +202,7 @@ ${resumeText}
     console.log('Gemini extracted info:', extractedInfo);
 
     // Validate and clean the extracted data
-    const result = {
+    const base = {
       name: extractedInfo.name || 'Not specified',
       email: extractedInfo.email || 'Not specified',
       phone: extractedInfo.phone || 'Not specified',
@@ -214,14 +211,17 @@ ${resumeText}
       skillset: Array.isArray(extractedInfo.skillset) ? extractedInfo.skillset : []
     };
 
-    // Fallback to filename for name if Gemini couldn't extract it
-    if (result.name === 'Not specified' && filename) {
-      const filenameMatch = filename.match(/^([A-Z][a-z]+)/);
-      if (filenameMatch) {
-        result.name = filenameMatch[1];
-        console.log("Using filename as name fallback:", result.name);
-      }
-    }
+    // If Gemini couldn't provide email/phone/name, refine from raw text/filename
+    const refined = refineContactFromText(resumeText, filename, base);
+
+    const result = {
+      name: refined.name || base.name,
+      email: refined.email || base.email,
+      phone: refined.phone || base.phone,
+      designation: base.designation,
+      pastCompanies: base.pastCompanies,
+      skillset: base.skillset
+    };
 
     console.log("Final extracted info:", result);
     return result;
@@ -229,7 +229,16 @@ ${resumeText}
   } catch (error) {
     console.error("Error extracting candidate info with Gemini:", error);
     console.log("Falling back to regex extraction...");
-    return await fallbackExtraction(resumeText, filename);
+    const base = await fallbackExtraction(resumeText, filename);
+    const refined = refineContactFromText(resumeText, filename, base);
+    return {
+      name: refined.name || base.name,
+      email: refined.email || base.email,
+      phone: refined.phone || base.phone,
+      designation: base.designation,
+      pastCompanies: base.pastCompanies,
+      skillset: base.skillset,
+    };
   }
 }
 
@@ -1047,13 +1056,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Extract text and score each resume
       const results = await Promise.all(files.map(async (file) => {
         let text = '';
-        if (file.mimetype === 'application/pdf') {
-          text = (await require('pdf-parse')(file.buffer)).text;
-        } else if (file.mimetype === 'text/plain') {
-          text = file.buffer.toString('utf-8');
-        } else {
-          // For DOC/DOCX, just use filename as placeholder
-          text = file.originalname;
+        try {
+          text = await extractTextFromFile(file.buffer, file.mimetype, file.originalname);
+        } catch (error) {
+          console.error('Error extracting text from file:', error);
+          text = `Error processing ${file.originalname}`;
         }
         // Use Gemini to score
         let score = 0;
@@ -1061,7 +1068,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const apiKey = process.env.GEMINI_API_KEY;
           if (!apiKey) throw new Error('Missing Gemini API key');
           const prompt = `Score this resume for the job role '${jobRole}' on a scale of 0-100. Only return the score as a number.\n\nResume:\n${text}`;
-          const fetch = require('node-fetch');
+
           // Log the prompt sent to Gemini
           console.log('Gemini prompt:', prompt);
           const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-pro:generateContent?key=' + apiKey, {

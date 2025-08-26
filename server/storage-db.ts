@@ -27,6 +27,13 @@ import type { IStorage } from "./storage";
 const sql = postgres(process.env.DATABASE_URL!);
 const db = drizzle(sql);
 
+type TokenUsageRow = {
+  provider: string;
+  tokens: number;
+  cost: number;
+  timestamp: Date;
+};
+
 export class DatabaseStorage implements IStorage {
   async createCandidate(candidate: InsertCandidate): Promise<Candidate> {
     const [result] = await db.insert(candidates).values(candidate).returning();
@@ -136,7 +143,7 @@ export class DatabaseStorage implements IStorage {
     const recommended = evalResults.filter(e => e.recommendation === "Hire").length;
     const maybe = evalResults.filter(e => e.recommendation === "Maybe").length;
     const rejected = evalResults.filter(e => e.recommendation === "No").length;
-    const avgScore = total > 0 ? evalResults.reduce((sum, e) => sum + e.overallScore, 0) / total : 0;
+    const avgScore = total > 0 ? evalResults.reduce((sum: number, e: Evaluation) => sum + e.overallScore, 0) / total : 0;
 
     return { total, recommended, maybe, rejected, avgScore: Math.round(avgScore * 10) / 10 };
   }
@@ -145,10 +152,12 @@ export class DatabaseStorage implements IStorage {
     const [result] = await db.insert(users).values(user).returning();
     return result;
   }
+
   async getUserByEmail(email: string): Promise<User | undefined> {
     const result = await db.select().from(users).where(eq(users.email, email));
     return result[0];
   }
+
   async findCandidatesByEmail(email: string): Promise<Candidate[]> {
     return await db.select().from(candidates).where(eq(candidates.email, email));
   }
@@ -167,6 +176,7 @@ export class DatabaseStorage implements IStorage {
     const result = await db.select().from(settings).where(eq(settings.key, key));
     return result[0]?.value;
   }
+
   async setSetting(key: string, value: string): Promise<void> {
     const existing = await db.select().from(settings).where(eq(settings.key, key));
     if (existing[0]) {
@@ -179,6 +189,7 @@ export class DatabaseStorage implements IStorage {
   async getQuestionsByRole(role: string) {
     return await db.select().from(questionBank).where(eq(questionBank.role, role));
   }
+
   async saveQuestionToBank({ role, questionText, source }: { role: string, questionText: string, source: string }) {
     await db.insert(questionBank).values({ role, questionText, source });
   }
@@ -191,18 +202,19 @@ export class DatabaseStorage implements IStorage {
   async deleteInterview(id: number): Promise<void> {
     await db.delete(interviews).where(eq(interviews.id, id));
   }
+
   async deleteCandidate(id: number): Promise<void> {
-    // With ON DELETE CASCADE foreign key constraints, the database will automatically
-    // delete all related records (interviews, answers, evaluations, invitations)
-    // when the candidate is deleted
     await db.delete(candidates).where(eq(candidates.id, id));
   }
+
   async deleteAnswersByInterview(interviewId: number): Promise<void> {
     await db.delete(answers).where(eq(answers.interviewId, interviewId));
   }
+
   async deleteEvaluationByInterview(interviewId: number): Promise<void> {
     await db.delete(evaluations).where(eq(evaluations.interviewId, interviewId));
   }
+
   async disqualifyCandidate(id: number): Promise<void> {
     await db.update(candidates).set({ disqualified: true }).where(eq(candidates.id, id));
   }
@@ -229,13 +241,16 @@ export class DatabaseStorage implements IStorage {
   async getAllAdmins(): Promise<User[]> {
     return await db.select().from(users).where(eq(users.role, 'admin'));
   }
+
   async updateAdminRole(email: string, adminRole: string) {
     await db.update(users).set({ adminRole }).where(eq(users.email, email));
   }
+
   async addAdmin(email: string, password: string, adminRole: string) {
     const [user] = await db.insert(users).values({ email, password, role: 'admin', adminRole, createdAt: new Date() }).returning();
     return user;
   }
+
   async removeAdmin(email: string) {
     await db.delete(users).where(eq(users.email, email));
   }
@@ -243,31 +258,35 @@ export class DatabaseStorage implements IStorage {
   async logTokenUsage(provider: string, tokens: number, cost: number, timestamp?: Date) {
     await db.insert(tokenUsage).values({ provider, tokens, cost, timestamp: timestamp || new Date() });
   }
+
   async getTokenUsageStats() {
-    // Aggregate by provider and period
     const now = new Date();
     const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const startOfWeek = new Date(now);
     startOfWeek.setDate(now.getDate() - now.getDay());
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+
     const providers = ['openai', 'gemini'];
-    const stats: any = {};
+    const stats: Record<string, { daily: number; weekly: number; monthly: number; cost: number }> = {};
+
     for (const provider of providers) {
-      const daily = await db.select().from(tokenUsage).where(tokenUsage.provider.eq(provider)).where(tokenUsage.timestamp.gte(startOfDay));
-      const weekly = await db.select().from(tokenUsage).where(tokenUsage.provider.eq(provider)).where(tokenUsage.timestamp.gte(startOfWeek));
-      const monthly = await db.select().from(tokenUsage).where(tokenUsage.provider.eq(provider)).where(tokenUsage.timestamp.gte(startOfMonth));
-      const all = await db.select().from(tokenUsage).where(tokenUsage.provider.eq(provider));
+      const daily: TokenUsageRow[] = await db.select().from(tokenUsage).where(tokenUsage.provider.eq(provider)).where(tokenUsage.timestamp.gte(startOfDay));
+      const weekly: TokenUsageRow[] = await db.select().from(tokenUsage).where(tokenUsage.provider.eq(provider)).where(tokenUsage.timestamp.gte(startOfWeek));
+      const monthly: TokenUsageRow[] = await db.select().from(tokenUsage).where(tokenUsage.provider.eq(provider)).where(tokenUsage.timestamp.gte(startOfMonth));
+      const all: TokenUsageRow[] = await db.select().from(tokenUsage).where(tokenUsage.provider.eq(provider));
+
       stats[provider] = {
-        daily: daily.reduce((sum, u) => sum + u.tokens, 0),
-        weekly: weekly.reduce((sum, u) => sum + u.tokens, 0),
-        monthly: monthly.reduce((sum, u) => sum + u.tokens, 0),
-        cost: all.reduce((sum, u) => sum + u.cost, 0),
+        daily: daily.reduce((sum: number, u: TokenUsageRow) => sum + u.tokens, 0),
+        weekly: weekly.reduce((sum: number, u: TokenUsageRow) => sum + u.tokens, 0),
+        monthly: monthly.reduce((sum: number, u: TokenUsageRow) => sum + u.tokens, 0),
+        cost: all.reduce((sum: number, u: TokenUsageRow) => sum + u.cost, 0),
       };
     }
+
     return stats;
   }
 
-  // Invitation operations - using in-memory storage for now
+  // Invitation operations
   async createInvitation(invitation: { 
     candidateId: number | null; 
     email: string; 
@@ -291,15 +310,15 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getInvitationByToken(token: string): Promise<any | undefined> {
-    const result = await sql`
-      SELECT * FROM invitations WHERE token = ${token}
-    `;
+    const result = await sql`SELECT * FROM invitations WHERE token = ${token}`;
     return result[0];
   }
 
   async updateInvitationStatus(token: string, status: string): Promise<void> {
     await sql`
-      UPDATE invitations SET status = ${status}, updated_at = NOW() WHERE token = ${token}
+      UPDATE invitations
+      SET status = ${status}, updated_at = NOW()
+      WHERE token = ${token}
     `;
   }
 
