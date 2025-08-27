@@ -2,6 +2,7 @@
 // This endpoint handles resume information extraction with improved error handling
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import formidable from 'formidable';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   const { pathname } = new URL(req.url || '', `http://${req.headers.host}`);
@@ -240,98 +241,92 @@ function handleExtractResumeInfo(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'POST') {
     try {
       console.log('Extract resume info called');
-      console.log('Request body type:', typeof req.body);
-      console.log('Request body keys:', req.body ? Object.keys(req.body) : 'no body');
       
-      let resumeText = '';
-      let filename = '';
+      // Use formidable to parse multipart form data
+      const form = formidable({
+        keepExtensions: true,
+        maxFileSize: 10 * 1024 * 1024, // 10MB limit
+      });
       
-      // Vercel parses multipart form data differently
-      // Check for file content in various possible locations
-      if (req.body && typeof req.body === 'object') {
-        // Try to get the actual file content
-        if (req.body.resume && req.body.resume.content) {
-          // File content is in the resume field
-          resumeText = req.body.resume.content;
-          filename = req.body.resume.name || 'resume.pdf';
-        } else if (req.body.file && req.body.file.content) {
-          // File content is in the file field
-          resumeText = req.body.file.content;
-          filename = req.body.file.name || 'resume.pdf';
-        } else if (req.body.content) {
-          // Direct content field
-          resumeText = req.body.content;
-          filename = req.body.filename || 'resume.txt';
-        } else if (req.body.resumeText) {
-          // Resume text field
-          resumeText = req.body.resumeText;
-          filename = req.body.filename || 'resume.txt';
-        } else if (req.body.text) {
-          // Text field
-          resumeText = req.body.text;
-          filename = req.body.filename || 'resume.txt';
+      // Parse the form data
+      form.parse(req, async (err, fields, files) => {
+        if (err) {
+          console.error('Form parsing error:', err);
+          return res.status(400).json({ 
+            message: 'Failed to parse form data',
+            error: err.message 
+          });
         }
         
-        // If we have a file object but need to extract content
-        if (!resumeText && req.body.resume && typeof req.body.resume === 'object') {
-          if (req.body.resume.data) {
-            resumeText = req.body.resume.data.toString('utf8');
-          } else if (req.body.resume.buffer) {
-            resumeText = req.body.resume.buffer.toString('utf8');
+        console.log('Fields:', fields);
+        console.log('Files:', files);
+        
+        let resumeText = '';
+        let filename = '';
+        
+        // Check if we have a file
+        if (files.resume && files.resume[0]) {
+          const file = files.resume[0];
+          filename = file.originalFilename || 'resume.pdf';
+          
+          // Read the file content
+          if (file.filepath) {
+            try {
+              const fs = await import('fs');
+              const content = fs.readFileSync(file.filepath, 'utf8');
+              resumeText = content;
+              console.log('File content read successfully, length:', content.length);
+            } catch (readError) {
+              console.error('Error reading file:', readError);
+              return res.status(400).json({ 
+                message: 'Failed to read uploaded file',
+                error: readError.message 
+              });
+            }
           }
-          filename = req.body.resume.name || 'resume.pdf';
-        }
-      }
-      
-      // If still no content, try to get from raw body
-      if (!resumeText && req.body) {
-        if (typeof req.body === 'string') {
-          resumeText = req.body;
-        } else if (Buffer.isBuffer(req.body)) {
-          resumeText = req.body.toString('utf8');
-        } else {
-          // Try to find any text content in the body
-          const bodyStr = JSON.stringify(req.body);
-          if (bodyStr.length > 100) { // If body has substantial content
-            resumeText = bodyStr;
-            filename = 'extracted-content.txt';
+        } else if (files.file && files.file[0]) {
+          // Alternative field name
+          const file = files.file[0];
+          filename = file.originalFilename || 'resume.pdf';
+          
+          if (file.filepath) {
+            try {
+              const fs = await import('fs');
+              const content = fs.readFileSync(file.filepath, 'utf8');
+              resumeText = content;
+              console.log('File content read successfully, length:', content.length);
+            } catch (readError) {
+              console.error('Error reading file:', readError);
+              return res.status(400).json({ 
+                message: 'Failed to read uploaded file',
+                error: readError.message 
+              });
+            }
           }
         }
-      }
-      
-      console.log('Resume text length:', resumeText ? resumeText.length : 0);
-      console.log('Filename:', filename);
-      
-      // If we still don't have content, return an error instead of mock data
-      if (!resumeText || resumeText.trim().length === 0) {
-        console.log('No resume content found');
-        return res.status(400).json({ 
-          message: 'No resume content found. Please ensure the file was uploaded correctly.',
-          error: 'MISSING_CONTENT'
-        });
-      }
-      
-      // Clean up the text - remove any JSON formatting if present
-      if (resumeText.startsWith('{') || resumeText.startsWith('[')) {
-        try {
-          const parsed = JSON.parse(resumeText);
-          if (parsed.content) {
-            resumeText = parsed.content;
-          } else if (parsed.text) {
-            resumeText = parsed.text;
-          }
-        } catch (e) {
-          // If JSON parsing fails, use the text as is
-          console.log('JSON parsing failed, using text as is');
+        
+        console.log('Resume text length:', resumeText ? resumeText.length : 0);
+        console.log('Filename:', filename);
+        
+        // If we still don't have content, return an error
+        if (!resumeText || resumeText.trim().length === 0) {
+          console.log('No resume content found');
+          return res.status(400).json({ 
+            message: 'No resume content found. Please ensure the file was uploaded correctly.',
+            error: 'MISSING_CONTENT',
+            fields: Object.keys(fields),
+            files: Object.keys(files)
+          });
         }
-      }
+        
+        // Extract information using the actual logic
+        const extractedInfo = extractCandidateInfoFromText(resumeText, filename);
+        
+        console.log('Successfully extracted info:', extractedInfo);
+        
+        return res.status(200).json(extractedInfo);
+      });
       
-      // Extract information using the actual logic
-      const extractedInfo = extractCandidateInfoFromText(resumeText, filename);
-      
-      console.log('Successfully extracted info:', extractedInfo);
-      
-      return res.status(200).json(extractedInfo);
     } catch (error) {
       console.error('Error extracting resume info:', error);
       return res.status(500).json({ 
@@ -339,9 +334,9 @@ function handleExtractResumeInfo(req: VercelRequest, res: VercelResponse) {
         error: error.message 
       });
     }
+  } else {
+    return res.status(405).json({ message: 'Method not allowed' });
   }
-
-  return res.status(405).json({ message: 'Method not allowed' });
 }
 
 function handleSendInterviewInvite(req: VercelRequest, res: VercelResponse) {
