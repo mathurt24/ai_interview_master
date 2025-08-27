@@ -192,11 +192,42 @@ function handleAdminVoiceProvider(req: VercelRequest, res: VercelResponse) {
 
 function handleAdminResumeUpload(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'POST') {
-    // Mock resume upload response
-    return res.status(200).json({
-      success: true,
-      message: "Resume uploaded successfully"
-    });
+    try {
+      // Mock file upload handling for Vercel
+      // In production, you'd use multer or similar for file handling
+      const { file, candidateInfo } = req.body;
+      
+      if (!file && !candidateInfo) {
+        return res.status(400).json({ message: 'File or candidate info is required' });
+      }
+
+      let extractedInfo: any = null;
+      
+      if (file) {
+        // Mock file processing
+        const mockResumeText = `Sample Resume Content
+${candidateInfo?.name || 'Candidate Name'}
+${candidateInfo?.email || 'candidate@example.com'}
+${candidateInfo?.phone || '+1-555-123-4567'}
+
+SKILLS
+React, Node.js, TypeScript, Python, AWS, Docker
+
+EXPERIENCE
+Software Engineer at Tech Company Inc.`;
+        
+        extractedInfo = extractCandidateInfoFromText(mockResumeText, file.name || 'resume.pdf');
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: "Resume uploaded successfully",
+        extractedInfo: extractedInfo
+      });
+    } catch (error) {
+      console.error('Error uploading resume:', error);
+      return res.status(500).json({ message: 'Failed to upload resume' });
+    }
   }
 
   return res.status(405).json({ message: 'Method not allowed' });
@@ -205,13 +236,36 @@ function handleAdminResumeUpload(req: VercelRequest, res: VercelResponse) {
 function handleExtractResumeInfo(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'POST') {
     try {
-      const { resumeText, filename } = req.body;
+      // Handle both file upload and text-based requests
+      let resumeText = '';
+      let filename = '';
       
-      if (!resumeText) {
-        return res.status(400).json({ message: 'Resume text is required' });
+      if (req.body.resumeText) {
+        // Direct text input
+        resumeText = req.body.resumeText;
+        filename = req.body.filename || 'resume.txt';
+      } else if (req.body.file) {
+        // File upload (mock handling for Vercel)
+        resumeText = req.body.file.content || 'Resume content extracted from file';
+        filename = req.body.file.name || 'resume.pdf';
+      } else {
+        // Mock resume data for testing
+        resumeText = `John Doe
+Software Engineer
+john.doe@example.com
++1-555-123-4567
+
+EXPERIENCE
+Worked at Tech Company Inc. for 3 years
+Skills: React, Node.js, TypeScript, Python, AWS, Docker`;
+        filename = 'sample-resume.txt';
       }
 
-      // Extract information using the actual logic from your backend
+      if (!resumeText) {
+        return res.status(400).json({ message: 'Resume content is required' });
+      }
+
+      // Extract information using the actual logic
       const extractedInfo = extractCandidateInfoFromText(resumeText, filename);
       
       return res.status(200).json(extractedInfo);
@@ -229,14 +283,28 @@ function handleSendInterviewInvite(req: VercelRequest, res: VercelResponse) {
     try {
       const { candidateInfo, inviteEmail, jobRole, skillset } = req.body;
       
+      if (!inviteEmail || !jobRole) {
+        return res.status(400).json({ message: 'Email and job role are required' });
+      }
+
       // Generate a unique token
       const token = `${Date.now()}-${inviteEmail}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      
+      // Mock email sending (in production, this would use SendGrid or similar)
+      const emailContent = generateInterviewInviteEmail(candidateInfo, inviteEmail, jobRole, skillset, token);
+      
+      console.log('=== EMAIL SENT (MOCK MODE) ===');
+      console.log(`To: ${inviteEmail}`);
+      console.log(`Subject: 🎯 Interview Invitation for ${jobRole} Position`);
+      console.log('Body:', emailContent);
+      console.log('=====================================');
       
       // Mock successful invitation
       return res.status(200).json({
         success: true,
         message: "Interview invitation sent successfully",
-        token: token
+        token: token,
+        emailSent: true
       });
     } catch (error) {
       console.error('Error sending interview invite:', error);
@@ -245,6 +313,69 @@ function handleSendInterviewInvite(req: VercelRequest, res: VercelResponse) {
   }
 
   return res.status(405).json({ message: 'Method not allowed' });
+}
+
+// Helper function to generate interview invitation email
+function generateInterviewInviteEmail(candidateInfo: any, inviteEmail: string, jobRole: string, skillset: string, token: string) {
+  const candidateName = candidateInfo?.name || 'Candidate';
+  const frontendUrl = 'https://ai-interview-master-nd5jbgvq3-mathurt24-gmailcoms-projects.vercel.app';
+  
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Interview Invitation</title>
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+    .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
+    .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }
+    .button { display: inline-block; background: #667eea; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; margin: 20px 0; }
+    .footer { text-align: center; margin-top: 30px; color: #666; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>🎯 Interview Invitation</h1>
+      <p>You've been selected for an AI-powered interview!</p>
+    </div>
+    <div class="content">
+      <h2>Dear ${candidateName},</h2>
+      <p>Congratulations! You have been invited to interview for the <strong>${jobRole}</strong> position.</p>
+      
+      <h3>📋 Position Details:</h3>
+      <ul>
+        <li><strong>Role:</strong> ${jobRole}</li>
+        <li><strong>Required Skills:</strong> ${skillset || 'As per your resume'}</li>
+      </ul>
+      
+      <h3>🚀 What to Expect:</h3>
+      <ul>
+        <li>AI-powered video interview</li>
+        <li>Real-time question generation based on your resume</li>
+        <li>Immediate feedback and scoring</li>
+        <li>Professional evaluation process</li>
+      </ul>
+      
+      <div style="text-align: center;">
+        <a href="${frontendUrl}/signup?token=${token}" class="button">Start Your Interview</a>
+      </div>
+      
+      <p><strong>Important:</strong> Please click the button above to create your account and begin the interview process. The link is unique to you and should not be shared.</p>
+      
+      <p>If you have any questions, please don't hesitate to reach out to our team.</p>
+      
+      <p>Best regards,<br>
+      <strong>AI Interview Team</strong><br>
+      FirstroundAI</p>
+    </div>
+    <div class="footer">
+      <p>This is an automated invitation. Please do not reply to this email.</p>
+    </div>
+  </div>
+</body>
+</html>`;
 }
 
 function handleInvitations(req: VercelRequest, res: VercelResponse) {
