@@ -236,20 +236,61 @@ Software Engineer at Tech Company Inc.`;
 function handleExtractResumeInfo(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'POST') {
     try {
-      // Handle both file upload and text-based requests
+      console.log('Extract resume info called');
+      console.log('Request body:', req.body);
+      console.log('Request headers:', req.headers);
+      
+      // For Vercel, we need to handle the parsed form data
+      // The frontend sends multipart form data, but Vercel parses it differently
       let resumeText = '';
       let filename = '';
       
-      if (req.body.resumeText) {
-        // Direct text input
-        resumeText = req.body.resumeText;
-        filename = req.body.filename || 'resume.txt';
-      } else if (req.body.file) {
-        // File upload (mock handling for Vercel)
-        resumeText = req.body.file.content || 'Resume content extracted from file';
-        filename = req.body.file.name || 'resume.pdf';
-      } else {
-        // Mock resume data for testing
+      // Check if we have the file content in the request body
+      if (req.body && typeof req.body === 'object') {
+        // Try to get the file content from various possible fields
+        if (req.body.resumeText) {
+          resumeText = req.body.resumeText;
+          filename = req.body.filename || 'resume.txt';
+        } else if (req.body.file) {
+          // Handle file object
+          if (typeof req.body.file === 'string') {
+            resumeText = req.body.file;
+          } else if (req.body.file.content) {
+            resumeText = req.body.file.content;
+          } else if (req.body.file.text) {
+            resumeText = req.body.file.text;
+          }
+          filename = req.body.file.name || 'resume.pdf';
+        } else if (req.body.content) {
+          resumeText = req.body.content;
+          filename = req.body.filename || 'resume.txt';
+        } else if (req.body.text) {
+          resumeText = req.body.text;
+          filename = req.body.filename || 'resume.txt';
+        }
+      }
+      
+      // If we still don't have content, try to extract from the raw body
+      if (!resumeText && req.body) {
+        // Convert body to string if it's not already
+        if (typeof req.body === 'string') {
+          resumeText = req.body;
+        } else if (Buffer.isBuffer(req.body)) {
+          resumeText = req.body.toString('utf8');
+        } else {
+          // Try to stringify the body
+          try {
+            resumeText = JSON.stringify(req.body);
+          } catch (e) {
+            resumeText = String(req.body);
+          }
+        }
+        filename = 'extracted-content.txt';
+      }
+
+      // If no content found, use mock data for testing
+      if (!resumeText || resumeText.trim().length === 0) {
+        console.log('No resume content found, using mock data');
         resumeText = `John Doe
 Software Engineer
 john.doe@example.com
@@ -261,12 +302,13 @@ Skills: React, Node.js, TypeScript, Python, AWS, Docker`;
         filename = 'sample-resume.txt';
       }
 
-      if (!resumeText) {
-        return res.status(400).json({ message: 'Resume content is required' });
-      }
+      console.log('Processing resume text length:', resumeText.length);
+      console.log('Filename:', filename);
 
       // Extract information using the actual logic
       const extractedInfo = extractCandidateInfoFromText(resumeText, filename);
+      
+      console.log('Extracted info:', extractedInfo);
       
       return res.status(200).json(extractedInfo);
     } catch (error) {
