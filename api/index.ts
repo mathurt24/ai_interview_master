@@ -241,6 +241,9 @@ function handleExtractResumeInfo(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'POST') {
     try {
       console.log('Extract resume info called');
+      console.log('Environment check in serverless function:');
+      console.log('OPENAI_API_KEY:', process.env.OPENAI_API_KEY ? `Found (${process.env.OPENAI_API_KEY.substring(0, 10)}...)` : "Not found");
+      console.log('NODE_ENV:', process.env.NODE_ENV);
       
       // Use formidable to parse multipart form data
       const form = formidable({
@@ -319,12 +322,20 @@ function handleExtractResumeInfo(req: VercelRequest, res: VercelResponse) {
           });
         }
         
-        // Extract information using the actual logic
-        const extractedInfo = await extractCandidateInfoFromText(resumeText, filename);
-        
-        console.log('Successfully extracted info:', extractedInfo);
-        
-        return res.status(200).json(extractedInfo);
+        try {
+          // Extract information using the actual logic
+          const extractedInfo = await extractCandidateInfoFromText(resumeText, filename);
+          
+          console.log('Successfully extracted info:', extractedInfo);
+          
+          return res.status(200).json(extractedInfo);
+        } catch (extractionError) {
+          console.error('Error in extraction:', extractionError);
+          return res.status(500).json({ 
+            message: 'Failed to extract resume information',
+            error: extractionError.message 
+          });
+        }
       });
       
     } catch (error) {
