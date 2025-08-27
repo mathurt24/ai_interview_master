@@ -24,20 +24,32 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return handleAdminStats(req, res);
   }
   
+  if (pathname.startsWith('/api/admin/ai-provider')) {
+    return handleAdminAIProvider(req, res);
+  }
+  
+  if (pathname.startsWith('/api/admin/voice-provider')) {
+    return handleAdminVoiceProvider(req, res);
+  }
+  
+  if (pathname.startsWith('/api/admin/resume-upload')) {
+    return handleAdminResumeUpload(req, res);
+  }
+  
   if (pathname.startsWith('/api/admin/extract-resume-info')) {
-    return handleExtractResumeInfo(req, res);
+    return handleAdminExtractResumeInfo(req, res);
   }
   
   if (pathname.startsWith('/api/admin/send-interview-invite')) {
-    return handleSendInterviewInvite(req, res);
+    return handleAdminSendInterviewInvite(req, res);
   }
   
   if (pathname.startsWith('/api/invitations')) {
     return handleInvitations(req, res);
   }
   
-  if (pathname.startsWith('/api/interviews/start')) {
-    return handleInterviewsStart(req, res);
+  if (pathname.startsWith('/api/interviews')) {
+    return handleInterviews(req, res);
   }
   
   // Default response
@@ -52,7 +64,7 @@ function handleLogin(req: VercelRequest, res: VercelResponse) {
   try {
     const { email, password } = req.body;
     
-    // Simple admin check
+    // Admin authentication
     if (email === 'admin@admin.com' && password === 'admin') {
       return res.status(200).json({
         id: 2,
@@ -61,16 +73,13 @@ function handleLogin(req: VercelRequest, res: VercelResponse) {
       });
     }
 
-    // Check for candidate login
-    if (email === 'candidate@example.com' && password === 'password') {
-      return res.status(200).json({
-        id: 1,
-        email: 'candidate@example.com',
-        role: 'candidate'
-      });
-    }
+    // For now, return a mock candidate response
+    return res.status(200).json({
+      id: 1,
+      email: email,
+      role: 'candidate'
+    });
 
-    return res.status(401).json({ message: 'Invalid email or password' });
   } catch (error) {
     return res.status(400).json({ message: 'Invalid request data' });
   }
@@ -84,16 +93,18 @@ function handleSignup(req: VercelRequest, res: VercelResponse) {
   try {
     const { email, password, token } = req.body;
     
-    // Mock signup - in production this would create a real user
-    if (email && password) {
-      return res.status(200).json({
-        id: Math.floor(Math.random() * 1000),
-        email: email,
-        role: 'candidate'
-      });
+    // Check if user already exists (mock check)
+    if (email === 'admin@admin.com') {
+      return res.status(400).json({ message: 'Email already registered' });
     }
 
-    return res.status(400).json({ message: 'Invalid signup data' });
+    // Mock successful signup
+    return res.status(200).json({
+      id: Math.floor(Math.random() * 1000) + 1,
+      email: email,
+      role: 'candidate'
+    });
+
   } catch (error) {
     return res.status(400).json({ message: 'Invalid request data' });
   }
@@ -101,24 +112,22 @@ function handleSignup(req: VercelRequest, res: VercelResponse) {
 
 function handleAdminCandidates(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'GET') {
-    // Return mock data for now
     return res.status(200).json([
       {
         id: 1,
-        name: "Test Candidate",
-        email: "candidate@example.com",
+        name: "Devansha Mathur",
+        email: "devansha@example.com",
         phone: "+1-555-123-4567",
         job_role: "Software Engineer",
         created_at: new Date().toISOString()
       }
     ]);
   }
-  
+
   if (req.method === 'DELETE') {
-    const candidateId = req.url?.split('/').pop();
-    return res.status(200).json({ success: true, message: `Candidate ${candidateId} deleted` });
+    return res.status(200).json({ success: true });
   }
-  
+
   return res.status(405).json({ message: 'Method not allowed' });
 }
 
@@ -126,90 +135,117 @@ function handleAdminInterviews(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'GET') {
     return res.status(200).json([]);
   }
-  
+
   if (req.method === 'DELETE') {
-    const interviewId = req.url?.split('/').pop();
-    return res.status(200).json({ success: true, message: `Interview ${interviewId} deleted` });
+    return res.status(200).json({ success: true });
   }
-  
+
   return res.status(405).json({ message: 'Method not allowed' });
 }
 
 function handleAdminStats(req: VercelRequest, res: VercelResponse) {
-  if (req.method === 'GET') {
-    return res.status(200).json({
-      total: 0,
-      recommended: 0,
-      maybe: 0,
-      reject: 0
-    });
+  if (req.method !== 'GET') {
+    return res.status(405).json({ message: 'Method not allowed' });
   }
-  
+
+  return res.status(200).json({
+    total: 1,
+    recommended: 0,
+    maybe: 0,
+    rejected: 0
+  });
+}
+
+function handleAdminAIProvider(req: VercelRequest, res: VercelResponse) {
+  if (req.method === 'GET') {
+    return res.status(200).json({ provider: "gemini" });
+  }
+
+  if (req.method === 'POST') {
+    return res.status(200).json({ success: true, message: "AI provider updated" });
+  }
+
   return res.status(405).json({ message: 'Method not allowed' });
 }
 
-function handleExtractResumeInfo(req: VercelRequest, res: VercelResponse) {
+function handleAdminVoiceProvider(req: VercelRequest, res: VercelResponse) {
+  if (req.method === 'GET') {
+    return res.status(200).json({ provider: "elevenlabs" });
+  }
+
   if (req.method === 'POST') {
-    // Mock resume extraction
+    return res.status(200).json({ success: true, message: "Voice provider updated" });
+  }
+
+  return res.status(405).json({ message: 'Method not allowed' });
+}
+
+function handleAdminResumeUpload(req: VercelRequest, res: VercelResponse) {
+  if (req.method === 'POST') {
     return res.status(200).json({
-      name: "Test User",
-      email: "test@example.com",
+      success: true,
+      message: "Resume uploaded successfully"
+    });
+  }
+
+  return res.status(405).json({ message: 'Method not allowed' });
+}
+
+function handleAdminExtractResumeInfo(req: VercelRequest, res: VercelResponse) {
+  if (req.method === 'POST') {
+    return res.status(200).json({
+      name: "Test Candidate",
+      email: "candidate@example.com",
       phone: "+1-555-123-4567",
       designation: "Software Engineer",
-      pastCompanies: ["Company A", "Company B"],
-      skillset: ["JavaScript", "React", "Node.js"]
+      pastCompanies: ["Tech Company Inc."],
+      skillset: ["React", "Node.js", "TypeScript"]
     });
   }
-  
+
   return res.status(405).json({ message: 'Method not allowed' });
 }
 
-function handleSendInterviewInvite(req: VercelRequest, res: VercelResponse) {
+function handleAdminSendInterviewInvite(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'POST') {
-    // Mock interview invitation
     return res.status(200).json({
       success: true,
       message: "Interview invitation sent successfully",
-      token: `invite-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+      token: "mock-token-" + Date.now()
     });
   }
-  
+
   return res.status(405).json({ message: 'Method not allowed' });
 }
 
 function handleInvitations(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'GET') {
-    const token = req.url?.split('/').pop();
-    if (token) {
-      return res.status(200).json({
-        id: 1,
-        candidateId: 1,
-        email: "candidate@example.com",
-        token: token,
-        jobRole: "Software Engineer",
-        skillset: "JavaScript,React,Node.js",
-        status: "pending",
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      });
-    }
     return res.status(200).json([]);
   }
-  
+
   return res.status(405).json({ message: 'Method not allowed' });
 }
 
-function handleInterviewsStart(req: VercelRequest, res: VercelResponse) {
+function handleInterviews(req: VercelRequest, res: VercelResponse) {
+  if (req.method === 'GET') {
+    return res.status(200).json([]);
+  }
+
   if (req.method === 'POST') {
-    // Mock interview start
     return res.status(200).json({
-      id: Math.floor(Math.random() * 1000),
+      id: Math.floor(Math.random() * 1000) + 1,
       candidateId: 1,
-      questions: ["Tell me about yourself", "What are your strengths?"],
+      questions: [
+        {
+          id: 1,
+          questionText: "Tell me about your experience with React.",
+          category: "Technical"
+        }
+      ],
       status: "in_progress",
       createdAt: new Date().toISOString()
     });
   }
-  
+
   return res.status(405).json({ message: 'Method not allowed' });
 } 

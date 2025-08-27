@@ -1,10 +1,10 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 
-const insertUserSchema = z.object({
+const signupSchema = z.object({
   email: z.string().email(),
   password: z.string().min(6),
+  token: z.string().optional(),
 });
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -13,27 +13,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const { email, password } = insertUserSchema.parse(req.body);
+    const { email, password, token } = signupSchema.parse(req.body);
     
-    // Admin authentication
-    if (email === 'admin@admin.com' && password === 'admin') {
-      return res.status(200).json({
-        id: 2,
-        email: 'admin@admin.com',
-        role: 'admin'
-      });
+    // Check if user already exists (mock check)
+    if (email === 'admin@admin.com') {
+      return res.status(400).json({ message: 'Email already registered' });
     }
 
-    // For now, return a mock candidate response
-    // In production, you'd connect to your database
+    // Mock successful signup
     return res.status(200).json({
-      id: 1,
+      id: Math.floor(Math.random() * 1000) + 1,
       email: email,
       role: 'candidate'
     });
 
   } catch (error) {
-    console.error('Login error:', error);
+    console.error('Signup error:', error);
     return res.status(400).json({ message: 'Invalid request data' });
   }
 } 
