@@ -487,37 +487,11 @@ async function extractCandidateInfoFromText(resumeText: string, filename: string
   // Try OpenAI extraction first
   const apiKey = process.env.OPENAI_API_KEY;
   console.log("OpenAI API key status:", apiKey ? `Found (${apiKey.substring(0, 10)}...)` : "Not found");
+  console.log("Full API key length:", apiKey ? apiKey.length : 0);
   
   if (apiKey) {
     try {
-      const prompt = `
-You are an expert resume parser. Extract the following information from this resume text and return ONLY a valid JSON object with these exact fields:
-
-{
-  "name": "Full Name",
-  "email": "Email Address", 
-  "phone": "Phone Number",
-  "designation": "Current/Recent Job Title",
-  "pastCompanies": ["Company 1", "Company 2", "Company 3"],
-  "skillset": ["Skill 1", "Skill 2", "Skill 3", "Skill 4", "Skill 5"]
-}
-
-Rules:
-- Extract the person's full name (first and last name) - look for patterns like "NAME" at the top or in headers
-- Extract the primary email address (not example/test emails like candidate@example.com)
-- Extract the primary phone number (look for +1, country codes, or standard formats)
-- Extract their current or most recent job title/designation from the resume
-- Extract up to 5 past companies they've worked for (look for company names in experience section)
-- Extract up to 10 key technical skills, programming languages, tools, or technologies from skills section
-- If any field cannot be found, use "Not specified" for text fields or empty array for arrays
-- Return ONLY the JSON object, no other text or explanations
-- Be very precise and accurate in extraction
-
-Resume text:
-${resumeText}
-`;
-
-      console.log('Sending resume to OpenAI for extraction...');
+      console.log('Attempting OpenAI extraction...');
       
       const response = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
@@ -534,23 +508,28 @@ ${resumeText}
             },
             {
               role: 'user',
-              content: prompt
+              content: `Extract from this resume: ${resumeText.substring(0, 1000)}`
             }
           ],
           temperature: 0.1,
-          max_tokens: 500
+          max_tokens: 200
         })
       });
 
+      console.log('OpenAI response status:', response.status);
+      console.log('OpenAI response headers:', Object.fromEntries(response.headers.entries()));
+
       if (!response.ok) {
-        throw new Error(`OpenAI API error: ${response.status}`);
+        const errorText = await response.text();
+        console.error('OpenAI API error response:', errorText);
+        throw new Error(`OpenAI API error: ${response.status} - ${errorText}`);
       }
 
-      const rawBody = await response.text();
-      console.log('OpenAI extraction response:', rawBody);
-
-      const data = JSON.parse(rawBody);
+      const data = await response.json();
+      console.log('OpenAI response data:', JSON.stringify(data, null, 2));
+      
       const text = data.choices?.[0]?.message?.content;
+      console.log('OpenAI response text:', text);
 
       if (!text) {
         throw new Error('No response text from OpenAI');
@@ -559,6 +538,7 @@ ${resumeText}
       // Extract JSON from the response
       const jsonMatch = text.match(/\{[\s\S]*\}/);
       if (!jsonMatch) {
+        console.log('No JSON found in OpenAI response, using fallback');
         throw new Error('No JSON found in OpenAI response');
       }
 
@@ -578,6 +558,8 @@ ${resumeText}
       console.error("Error extracting candidate info with OpenAI:", error);
       console.log("Falling back to regex extraction...");
     }
+  } else {
+    console.log("No OpenAI API key found, using fallback extraction");
   }
   
   // Fallback to regex-based extraction
