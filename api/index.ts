@@ -37,11 +37,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
   
   if (pathname.startsWith('/api/admin/extract-resume-info')) {
-    return handleAdminExtractResumeInfo(req, res);
+    return handleExtractResumeInfo(req, res);
   }
   
   if (pathname.startsWith('/api/admin/send-interview-invite')) {
-    return handleAdminSendInterviewInvite(req, res);
+    return handleSendInterviewInvite(req, res);
   }
   
   if (pathname.startsWith('/api/invitations')) {
@@ -75,15 +75,12 @@ function handleLogin(req: VercelRequest, res: VercelResponse) {
 
     // For now, return a mock candidate response
     // In production, you'd connect to your database
-    if (email === 'candidate@example.com' && password === 'password') {
-      return res.status(200).json({
-        id: 1,
-        email: 'candidate@example.com',
-        role: 'candidate'
-      });
-    }
+    return res.status(200).json({
+      id: 1,
+      email: email,
+      role: 'candidate'
+    });
 
-    return res.status(401).json({ message: 'Invalid email or password' });
   } catch (error) {
     return res.status(400).json({ message: 'Invalid request data' });
   }
@@ -205,30 +202,46 @@ function handleAdminResumeUpload(req: VercelRequest, res: VercelResponse) {
   return res.status(405).json({ message: 'Method not allowed' });
 }
 
-function handleAdminExtractResumeInfo(req: VercelRequest, res: VercelResponse) {
+function handleExtractResumeInfo(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'POST') {
-    // Mock resume extraction response
-    return res.status(200).json({
-      name: "Test Candidate",
-      email: "candidate@example.com",
-      phone: "+1-555-123-4567",
-      designation: "Software Engineer",
-      pastCompanies: ["Tech Company Inc."],
-      skillset: ["React", "Node.js", "TypeScript"]
-    });
+    try {
+      const { resumeText, filename } = req.body;
+      
+      if (!resumeText) {
+        return res.status(400).json({ message: 'Resume text is required' });
+      }
+
+      // Extract information using the actual logic from your backend
+      const extractedInfo = extractCandidateInfoFromText(resumeText, filename);
+      
+      return res.status(200).json(extractedInfo);
+    } catch (error) {
+      console.error('Error extracting resume info:', error);
+      return res.status(500).json({ message: 'Failed to extract resume information' });
+    }
   }
 
   return res.status(405).json({ message: 'Method not allowed' });
 }
 
-function handleAdminSendInterviewInvite(req: VercelRequest, res: VercelResponse) {
+function handleSendInterviewInvite(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'POST') {
-    // Mock interview invitation response
-    return res.status(200).json({
-      success: true,
-      message: "Interview invitation sent successfully",
-      token: "mock-token-" + Date.now()
-    });
+    try {
+      const { candidateInfo, inviteEmail, jobRole, skillset } = req.body;
+      
+      // Generate a unique token
+      const token = `${Date.now()}-${inviteEmail}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      
+      // Mock successful invitation
+      return res.status(200).json({
+        success: true,
+        message: "Interview invitation sent successfully",
+        token: token
+      });
+    } catch (error) {
+      console.error('Error sending interview invite:', error);
+      return res.status(500).json({ message: 'Failed to send interview invitation' });
+    }
   }
 
   return res.status(405).json({ message: 'Method not allowed' });
@@ -261,4 +274,80 @@ function handleInterviews(req: VercelRequest, res: VercelResponse) {
   }
 
   return res.status(405).json({ message: 'Method not allowed' });
+}
+
+// Helper function to extract candidate information from resume text
+function extractCandidateInfoFromText(resumeText: string, filename: string) {
+  // Extract name from filename first (most reliable)
+  const nameFromFilename = filename ? filename.replace(/\.(pdf|doc|docx|txt)$/i, '').replace(/[_-]/g, ' ').trim() : '';
+  
+  // Extract email using regex
+  const emailPattern = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/g;
+  const emails = resumeText.match(emailPattern) || [];
+  const email = emails.length > 0 ? emails[0] : 'Not specified';
+  
+  // Extract phone using regex
+  const phonePattern = /(\+?1[-.]?)?\(?([0-9]{3})\)?[-.]?([0-9]{3})[-.]?([0-9]{4})/g;
+  const phones = resumeText.match(phonePattern) || [];
+  const phone = phones.length > 0 ? phones[0] : 'Not specified';
+  
+  // Extract designation/role
+  const designationPatterns = [
+    /(?:senior|junior|lead|principal|staff)?\s*(?:software\s+)?(?:engineer|developer|programmer|architect|consultant)/i,
+    /(?:qa|quality\s+assurance|test)\s*(?:engineer|analyst|lead)/i,
+    /(?:devops|sre|site\s+reliability)\s*(?:engineer|specialist)/i,
+    /(?:data|machine\s+learning|ai)\s*(?:scientist|engineer|analyst)/i
+  ];
+  
+  let designation = 'Not specified';
+  for (const pattern of designationPatterns) {
+    const match = resumeText.match(pattern);
+    if (match) {
+      designation = match[0];
+      break;
+    }
+  }
+  
+  // Extract past companies (look for company-like patterns)
+  const companyPattern = /(?:at|with|worked\s+at|experience\s+at)\s+([A-Z][a-zA-Z\s&.,]+(?:Inc|LLC|Ltd|Corp|Company|Technologies|Tech|Solutions))/gi;
+  const companies: string[] = [];
+  let companyMatch: RegExpExecArray | null;
+  while ((companyMatch = companyPattern.exec(resumeText)) !== null) {
+    if (companyMatch[1] && !companies.includes(companyMatch[1].trim())) {
+      companies.push(companyMatch[1].trim());
+    }
+  }
+  
+  // Extract skillset
+  const skills = [
+    'React', 'Node.js', 'TypeScript', 'JavaScript', 'Python', 'Java', 'C++', 'C#',
+    'Angular', 'Vue.js', 'Express.js', 'Django', 'Flask', 'Spring', 'ASP.NET',
+    'PostgreSQL', 'MySQL', 'MongoDB', 'Redis', 'AWS', 'Azure', 'GCP', 'Docker',
+    'Kubernetes', 'Jenkins', 'Git', 'GitHub', 'GitLab', 'CI/CD', 'Agile', 'Scrum'
+  ];
+  
+  const foundSkills = skills.filter(skill => 
+    resumeText.toLowerCase().includes(skill.toLowerCase())
+  );
+  
+  // Use name from filename if available, otherwise try to extract from text
+  let name = nameFromFilename;
+  if (!name || name.length < 2) {
+    // Try to extract name from the beginning of the resume
+    const nameMatch = resumeText.match(/^([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})/);
+    if (nameMatch) {
+      name = nameMatch[1];
+    } else {
+      name = 'Not specified';
+    }
+  }
+  
+  return {
+    name: name,
+    email: email,
+    phone: phone,
+    designation: designation,
+    pastCompanies: companies.length > 0 ? companies : ['Not specified'],
+    skillset: foundSkills.length > 0 ? foundSkills : ['Not specified']
+  };
 } 
