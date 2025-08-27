@@ -240,83 +240,104 @@ function handleExtractResumeInfo(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'POST') {
     try {
       console.log('Extract resume info called');
-      console.log('Request body:', req.body);
-      console.log('Request headers:', req.headers);
+      console.log('Request body type:', typeof req.body);
+      console.log('Request body keys:', req.body ? Object.keys(req.body) : 'no body');
       
-      // For Vercel, we need to handle the parsed form data
-      // The frontend sends multipart form data, but Vercel parses it differently
       let resumeText = '';
       let filename = '';
       
-      // Check if we have the file content in the request body
+      // Vercel parses multipart form data differently
+      // Check for file content in various possible locations
       if (req.body && typeof req.body === 'object') {
-        // Try to get the file content from various possible fields
-        if (req.body.resumeText) {
-          resumeText = req.body.resumeText;
-          filename = req.body.filename || 'resume.txt';
-        } else if (req.body.file) {
-          // Handle file object
-          if (typeof req.body.file === 'string') {
-            resumeText = req.body.file;
-          } else if (req.body.file.content) {
-            resumeText = req.body.file.content;
-          } else if (req.body.file.text) {
-            resumeText = req.body.file.text;
-          }
+        // Try to get the actual file content
+        if (req.body.resume && req.body.resume.content) {
+          // File content is in the resume field
+          resumeText = req.body.resume.content;
+          filename = req.body.resume.name || 'resume.pdf';
+        } else if (req.body.file && req.body.file.content) {
+          // File content is in the file field
+          resumeText = req.body.file.content;
           filename = req.body.file.name || 'resume.pdf';
         } else if (req.body.content) {
+          // Direct content field
           resumeText = req.body.content;
           filename = req.body.filename || 'resume.txt';
+        } else if (req.body.resumeText) {
+          // Resume text field
+          resumeText = req.body.resumeText;
+          filename = req.body.filename || 'resume.txt';
         } else if (req.body.text) {
+          // Text field
           resumeText = req.body.text;
           filename = req.body.filename || 'resume.txt';
         }
+        
+        // If we have a file object but need to extract content
+        if (!resumeText && req.body.resume && typeof req.body.resume === 'object') {
+          if (req.body.resume.data) {
+            resumeText = req.body.resume.data.toString('utf8');
+          } else if (req.body.resume.buffer) {
+            resumeText = req.body.resume.buffer.toString('utf8');
+          }
+          filename = req.body.resume.name || 'resume.pdf';
+        }
       }
       
-      // If we still don't have content, try to extract from the raw body
+      // If still no content, try to get from raw body
       if (!resumeText && req.body) {
-        // Convert body to string if it's not already
         if (typeof req.body === 'string') {
           resumeText = req.body;
         } else if (Buffer.isBuffer(req.body)) {
           resumeText = req.body.toString('utf8');
         } else {
-          // Try to stringify the body
-          try {
-            resumeText = JSON.stringify(req.body);
-          } catch (e) {
-            resumeText = String(req.body);
+          // Try to find any text content in the body
+          const bodyStr = JSON.stringify(req.body);
+          if (bodyStr.length > 100) { // If body has substantial content
+            resumeText = bodyStr;
+            filename = 'extracted-content.txt';
           }
         }
-        filename = 'extracted-content.txt';
       }
-
-      // If no content found, use mock data for testing
-      if (!resumeText || resumeText.trim().length === 0) {
-        console.log('No resume content found, using mock data');
-        resumeText = `John Doe
-Software Engineer
-john.doe@example.com
-+1-555-123-4567
-
-EXPERIENCE
-Worked at Tech Company Inc. for 3 years
-Skills: React, Node.js, TypeScript, Python, AWS, Docker`;
-        filename = 'sample-resume.txt';
-      }
-
-      console.log('Processing resume text length:', resumeText.length);
+      
+      console.log('Resume text length:', resumeText ? resumeText.length : 0);
       console.log('Filename:', filename);
-
+      
+      // If we still don't have content, return an error instead of mock data
+      if (!resumeText || resumeText.trim().length === 0) {
+        console.log('No resume content found');
+        return res.status(400).json({ 
+          message: 'No resume content found. Please ensure the file was uploaded correctly.',
+          error: 'MISSING_CONTENT'
+        });
+      }
+      
+      // Clean up the text - remove any JSON formatting if present
+      if (resumeText.startsWith('{') || resumeText.startsWith('[')) {
+        try {
+          const parsed = JSON.parse(resumeText);
+          if (parsed.content) {
+            resumeText = parsed.content;
+          } else if (parsed.text) {
+            resumeText = parsed.text;
+          }
+        } catch (e) {
+          // If JSON parsing fails, use the text as is
+          console.log('JSON parsing failed, using text as is');
+        }
+      }
+      
       // Extract information using the actual logic
       const extractedInfo = extractCandidateInfoFromText(resumeText, filename);
       
-      console.log('Extracted info:', extractedInfo);
+      console.log('Successfully extracted info:', extractedInfo);
       
       return res.status(200).json(extractedInfo);
     } catch (error) {
       console.error('Error extracting resume info:', error);
-      return res.status(500).json({ message: 'Failed to extract resume information' });
+      return res.status(500).json({ 
+        message: 'Failed to extract resume information',
+        error: error.message 
+      });
     }
   }
 
@@ -454,6 +475,9 @@ function handleInterviews(req: VercelRequest, res: VercelResponse) {
 
 // Helper function to extract candidate information from resume text
 function extractCandidateInfoFromText(resumeText: string, filename: string) {
+  console.log('Extracting info from resume text (first 500 chars):', resumeText.substring(0, 500));
+  console.log('Filename:', filename);
+  
   // Extract name from filename first (most reliable)
   const nameFromFilename = filename ? filename.replace(/\.(pdf|doc|docx|txt)$/i, '').replace(/[_-]/g, ' ').trim() : '';
   
@@ -467,44 +491,79 @@ function extractCandidateInfoFromText(resumeText: string, filename: string) {
   const phones = resumeText.match(phonePattern) || [];
   const phone = phones.length > 0 ? phones[0] : 'Not specified';
   
-  // Extract designation/role
+  // Extract designation/role - look for patterns in the first few lines
+  const lines = resumeText.split('\n').slice(0, 10); // Check first 10 lines
+  let designation = 'Not specified';
+  
   const designationPatterns = [
     /(?:senior|junior|lead|principal|staff)?\s*(?:software\s+)?(?:engineer|developer|programmer|architect|consultant)/i,
     /(?:qa|quality\s+assurance|test)\s*(?:engineer|analyst|lead)/i,
     /(?:devops|sre|site\s+reliability)\s*(?:engineer|specialist)/i,
-    /(?:data|machine\s+learning|ai)\s*(?:scientist|engineer|analyst)/i
+    /(?:data|machine\s+learning|ai)\s*(?:scientist|engineer|analyst)/i,
+    /(?:product|project)\s*(?:manager|lead)/i,
+    /(?:business|systems)\s*(?:analyst|consultant)/i
   ];
   
-  let designation = 'Not specified';
-  for (const pattern of designationPatterns) {
-    const match = resumeText.match(pattern);
-    if (match) {
-      designation = match[0];
-      break;
+  for (const line of lines) {
+    for (const pattern of designationPatterns) {
+      const match = line.match(pattern);
+      if (match) {
+        designation = match[0];
+        break;
+      }
     }
+    if (designation !== 'Not specified') break;
   }
   
-  // Extract past companies (look for company-like patterns)
-  const companyPattern = /(?:at|with|worked\s+at|experience\s+at)\s+([A-Z][a-zA-Z\s&.,]+(?:Inc|LLC|Ltd|Corp|Company|Technologies|Tech|Solutions))/gi;
+  // Extract past companies - look for company patterns throughout the text
+  const companyPatterns = [
+    /(?:at|with|worked\s+at|experience\s+at|employed\s+at)\s+([A-Z][a-zA-Z\s&.,]+(?:Inc|LLC|Ltd|Corp|Company|Technologies|Tech|Solutions|Systems|Services))/gi,
+    /([A-Z][a-zA-Z\s&.,]+(?:Inc|LLC|Ltd|Corp|Company|Technologies|Tech|Solutions|Systems|Services))/g,
+    /(?:company|organization):\s*([A-Z][a-zA-Z\s&.,]+)/gi
+  ];
+  
   const companies: string[] = [];
-  let companyMatch: RegExpExecArray | null;
-  while ((companyMatch = companyPattern.exec(resumeText)) !== null) {
-    if (companyMatch[1] && !companies.includes(companyMatch[1].trim())) {
-      companies.push(companyMatch[1].trim());
+  for (const pattern of companyPatterns) {
+    let companyMatch: RegExpExecArray | null;
+    while ((companyMatch = pattern.exec(resumeText)) !== null) {
+      const company = companyMatch[1] ? companyMatch[1].trim() : companyMatch[0].trim();
+      if (company && company.length > 3 && !companies.includes(company) && 
+          !company.toLowerCase().includes('university') && 
+          !company.toLowerCase().includes('college')) {
+        companies.push(company);
+      }
     }
   }
   
-  // Extract skillset
-  const skills = [
-    'React', 'Node.js', 'TypeScript', 'JavaScript', 'Python', 'Java', 'C++', 'C#',
-    'Angular', 'Vue.js', 'Express.js', 'Django', 'Flask', 'Spring', 'ASP.NET',
-    'PostgreSQL', 'MySQL', 'MongoDB', 'Redis', 'AWS', 'Azure', 'GCP', 'Docker',
-    'Kubernetes', 'Jenkins', 'Git', 'GitHub', 'GitLab', 'CI/CD', 'Agile', 'Scrum'
+  // Extract skillset - look for technical skills throughout the text
+  const commonSkills = [
+    // Programming Languages
+    'JavaScript', 'TypeScript', 'Python', 'Java', 'C++', 'C#', 'Go', 'Rust', 'PHP', 'Ruby', 'Swift', 'Kotlin',
+    // Frontend
+    'React', 'Angular', 'Vue.js', 'HTML', 'CSS', 'Sass', 'Less', 'Bootstrap', 'Tailwind', 'jQuery',
+    // Backend
+    'Node.js', 'Express.js', 'Django', 'Flask', 'Spring', 'ASP.NET', 'Laravel', 'Ruby on Rails',
+    // Databases
+    'PostgreSQL', 'MySQL', 'MongoDB', 'Redis', 'SQLite', 'Oracle', 'SQL Server',
+    // Cloud & DevOps
+    'AWS', 'Azure', 'GCP', 'Docker', 'Kubernetes', 'Jenkins', 'GitLab CI', 'GitHub Actions',
+    // Tools & Others
+    'Git', 'GitHub', 'GitLab', 'Jira', 'Confluence', 'Agile', 'Scrum', 'REST API', 'GraphQL'
   ];
   
-  const foundSkills = skills.filter(skill => 
+  const foundSkills = commonSkills.filter(skill => 
     resumeText.toLowerCase().includes(skill.toLowerCase())
   );
+  
+  // Also look for skills mentioned in specific sections
+  const skillsSection = resumeText.match(/(?:skills?|technologies?|competencies?)[:.]?\s*([^•\n]+)/i);
+  if (skillsSection && skillsSection[1]) {
+    const skillsText = skillsSection[1];
+    const additionalSkills = commonSkills.filter(skill => 
+      skillsText.toLowerCase().includes(skill.toLowerCase()) && !foundSkills.includes(skill)
+    );
+    foundSkills.push(...additionalSkills);
+  }
   
   // Use name from filename if available, otherwise try to extract from text
   let name = nameFromFilename;
@@ -514,11 +573,22 @@ function extractCandidateInfoFromText(resumeText: string, filename: string) {
     if (nameMatch) {
       name = nameMatch[1];
     } else {
-      name = 'Not specified';
+      // Look for name patterns in the first few lines
+      for (const line of lines) {
+        const namePattern = /^([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})/;
+        const match = line.match(namePattern);
+        if (match && match[1].length > 3) {
+          name = match[1];
+          break;
+        }
+      }
+      if (!name || name.length < 2) {
+        name = 'Not specified';
+      }
     }
   }
   
-  return {
+  const result = {
     name: name,
     email: email,
     phone: phone,
@@ -526,4 +596,7 @@ function extractCandidateInfoFromText(resumeText: string, filename: string) {
     pastCompanies: companies.length > 0 ? companies : ['Not specified'],
     skillset: foundSkills.length > 0 ? foundSkills : ['Not specified']
   };
+  
+  console.log('Final extracted info:', result);
+  return result;
 } 
