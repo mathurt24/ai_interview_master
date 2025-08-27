@@ -47,28 +47,33 @@ async function extractTextFromFile(buffer: Buffer, mimetype: string, filename: s
     
     if (mimetype === 'application/pdf') {
       try {
-        // Try unpdf first for robust PDF text extraction
-        const unpdf = await import('unpdf');
-        if (unpdf && unpdf.extractText) {
-          try {
-            const result = await unpdf.extractText(buffer);
-            if (result && result.text && Array.isArray(result.text) && result.text.length > 0) {
-              const text = result.text.join(' ');
-              if (text.trim().length > 0) {
-                console.log("unpdf parsed successfully, extracted text length:", text.length);
-                return text;
-              }
-            }
-          } catch (extractError) {
-            console.log("unpdf extractText failed, trying fallback:", extractError);
-          }
+        console.log('PDF file detected, using improved unpdf extraction');
+        
+        // Import unpdf dynamically
+        const { getDocumentProxy } = await import('unpdf');
+        
+        // Convert Buffer to Uint8Array for unpdf
+        const uint8Array = new Uint8Array(buffer);
+        const pdf = await getDocumentProxy(uint8Array);
+        let fullText = "";
+
+        for (let i = 0; i < pdf.numPages; i++) {
+          const page = await pdf.getPage(i + 1);
+          const textContent = await page.getTextContent();
+          const pageText = textContent.items.map((item: any) => item.str).join(" ");
+          fullText += pageText + "\n";
         }
-        // If unpdf returns empty/invalid text, return conservative minimal text (no fake examples)
-        console.warn("unpdf returned empty text; using conservative minimal text");
-        return `Resume extracted from ${filename}`;
+
+        if (fullText.trim().length > 0) {
+          console.log(`PDF extracted successfully with unpdf, text length: ${fullText.length}`);
+          return fullText;
+        } else {
+          console.warn("unpdf returned empty text; using fallback");
+          return `Resume extracted from ${filename}`;
+        }
       } catch (pdfError) {
         console.error("PDF parsing failed with unpdf:", pdfError);
-        // Conservative fallback: do NOT inject fake emails/phones
+        // Conservative fallback
         return `Resume extracted from ${filename}`;
       }
     }
@@ -89,6 +94,57 @@ async function extractTextFromFile(buffer: Buffer, mimetype: string, filename: s
   } catch (error) {
     console.error("Error extracting text from file:", error);
     return `Error processing file: ${error}`;
+  }
+}
+
+// Utility: extract information using compromise NLP
+async function extractWithCompromise(text: string, filename?: string) {
+  try {
+    const nlp = await import('compromise');
+    const doc = nlp.default(text);
+    
+    // Extract name using NLP
+    const people = doc.people().out('array');
+    const name = people.length > 0 ? people[0] : null;
+    
+    // Extract email using regex
+    const emailMatch = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+    const email = emailMatch ? emailMatch[0] : null;
+    
+    // Extract phone using regex
+    const phoneMatch = text.match(/(\+91[\d\s]{10,}|[0-9]{10,15})/);
+    const phone = phoneMatch ? phoneMatch[0] : null;
+    
+    // Extract skills from technical skills section
+    const skillsSection = text.match(/TECHNICAL SKILLS([\s\S]*?)(?:EDUCATION|EXPERIENCE|PROFESSIONAL SUMMARY)/i);
+    let skills: string[] = [];
+    if (skillsSection) {
+      skills = skillsSection[1]
+        .split(/\n|,|•/)
+        .map(s => s.trim())
+        .filter(s => s.length > 1 && !/^[•\-\s]*$/.test(s))
+        .slice(0, 15); // Limit to 15 skills
+    }
+    
+    // Extract designation/role
+    const designationMatch = text.match(/(?:SENIOR|JUNIOR|LEAD|PRINCIPAL|STAFF)?\s*(?:SOFTWARE|QA|DEVELOPER|ENGINEER|ANALYST|MANAGER|LEAD|ARCHITECT)/i);
+    const designation = designationMatch ? designationMatch[0] : null;
+    
+    // Extract companies (look for common company patterns)
+    const companyMatches = text.match(/(?:at|with|worked at|experience at)\s+([A-Z][a-zA-Z\s&]+(?:Inc|LLC|Ltd|Corp|Company|Technologies|Tech|Solutions|Systems))/gi);
+    const companies = companyMatches ? companyMatches.map(m => m.replace(/(?:at|with|worked at|experience at)\s+/i, '').trim()) : [];
+    
+    return {
+      name: name || (filename ? filename.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').trim() : null),
+      email,
+      phone,
+      designation,
+      skills,
+      companies: companies.slice(0, 5) // Limit to 5 companies
+    };
+  } catch (error) {
+    console.error('Error in compromise extraction:', error);
+    return null;
   }
 }
 
@@ -152,10 +208,11 @@ async function extractCandidateInfo(resumeText: string, filename?: string): Prom
     console.log("Extracting info from resume text (first 500 chars):", resumeText.substring(0, 500));
     console.log("Filename:", filename);
     
-    // Use Gemini AI to extract information intelligently
-    const apiKey = process.env.GEMINI_API_KEY;
+    // Use OpenAI to extract information intelligently
+    const apiKey = process.env.OPENAI_API_KEY;
+    console.log("OpenAI API key status:", apiKey ? `Found (${apiKey.substring(0, 10)}...)` : "Not found");
     if (!apiKey) {
-      console.log("Gemini API key not found, using fallback extraction");
+      console.log("OpenAI API key not found, using fallback extraction");
       const base = await fallbackExtraction(resumeText, filename);
       const refined = refineContactFromText(resumeText, filename, base);
       return {
@@ -181,51 +238,67 @@ You are an expert resume parser. Extract the following information from this res
 }
 
 Rules:
-- Extract the person's full name (first and last name)
-- Extract the primary email address (not example/test emails)
-- Extract the primary phone number
-- Extract their current or most recent job title/designation
-- Extract up to 5 past companies they've worked for
-- Extract up to 10 key technical skills, programming languages, tools, or technologies
+- Extract the person's full name (first and last name) - look for patterns like "NAME" at the top or in headers
+- Extract the primary email address (not example/test emails like candidate@example.com)
+- Extract the primary phone number (look for +1, country codes, or standard formats)
+- Extract their current or most recent job title/designation from the resume
+- Extract up to 5 past companies they've worked for (look for company names in experience section)
+- Extract up to 10 key technical skills, programming languages, tools, or technologies from skills section
 - If any field cannot be found, use "Not specified" for text fields or empty array for arrays
-- Return ONLY the JSON object, no other text
+- Return ONLY the JSON object, no other text or explanations
+- Be very precise and accurate in extraction
 
 Resume text:
 ${resumeText}
 `;
 
-    console.log('Sending resume to Gemini for extraction...');
+    console.log('Sending resume to OpenAI for extraction...');
     
-    const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=' + apiKey, {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      },
       body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }]
+        model: 'gpt-4o-mini',
+        messages: [
+          {
+            role: 'system',
+            content: 'You are an expert resume parser. Extract candidate information and return ONLY a valid JSON object.'
+          },
+          {
+            role: 'user',
+            content: prompt
+          }
+        ],
+        temperature: 0.1,
+        max_tokens: 500
       })
     });
 
     if (!response.ok) {
-      throw new Error(`Gemini API error: ${response.status}`);
+      throw new Error(`OpenAI API error: ${response.status}`);
     }
 
     const rawBody = await response.text();
-    console.log('Gemini extraction response:', rawBody);
+    console.log('OpenAI extraction response:', rawBody);
 
     const data = JSON.parse(rawBody);
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    const text = data.choices?.[0]?.message?.content;
 
     if (!text) {
-      throw new Error('No response text from Gemini');
+      throw new Error('No response text from OpenAI');
     }
 
     // Extract JSON from the response
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
-      throw new Error('No JSON found in Gemini response');
+      throw new Error('No JSON found in OpenAI response');
     }
 
     const extractedInfo = JSON.parse(jsonMatch[0]);
-    console.log('Gemini extracted info:', extractedInfo);
+    console.log('OpenAI extracted info:', extractedInfo);
 
     // Validate and clean the extracted data
     const base = {
@@ -237,24 +310,38 @@ ${resumeText}
       skillset: Array.isArray(extractedInfo.skillset) ? extractedInfo.skillset : []
     };
 
-    // If Gemini couldn't provide email/phone/name, refine from raw text/filename
+    // If OpenAI couldn't provide email/phone/name, refine from raw text/filename
     const refined = refineContactFromText(resumeText, filename, base);
 
-    const result = {
+    return {
       name: refined.name || base.name,
       email: refined.email || base.email,
       phone: refined.phone || base.phone,
       designation: base.designation,
       pastCompanies: base.pastCompanies,
-      skillset: base.skillset
+      skillset: base.skillset,
     };
 
-    console.log("Final extracted info:", result);
-    return result;
-
   } catch (error) {
-    console.error("Error extracting candidate info with Gemini:", error);
-    console.log("Falling back to regex extraction...");
+    console.error("Error extracting candidate info with OpenAI:", error);
+    console.log("Falling back to compromise extraction...");
+    
+    // Try compromise extraction first
+    const compromiseResult = await extractWithCompromise(resumeText, filename);
+    if (compromiseResult && compromiseResult.name) {
+      console.log("Compromise extraction successful:", compromiseResult);
+      return {
+        name: compromiseResult.name,
+        email: compromiseResult.email || "Not specified",
+        phone: compromiseResult.phone || "Not specified",
+        designation: compromiseResult.designation || "Not specified",
+        pastCompanies: compromiseResult.companies || [],
+        skillset: compromiseResult.skills || [],
+      };
+    }
+    
+    // Fallback to regex extraction if compromise fails
+    console.log("Compromise extraction failed, using regex fallback...");
     const base = await fallbackExtraction(resumeText, filename);
     const refined = refineContactFromText(resumeText, filename, base);
     return {
@@ -1326,6 +1413,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { candidateInfo, jobRole, skillset } = req.body;
       
+      // Validate required fields
+      if (!candidateInfo || !candidateInfo.email || !jobRole) {
+        return res.status(400).json({ 
+          message: "Email and job role are required",
+          details: {
+            hasCandidateInfo: !!candidateInfo,
+            hasEmail: !!(candidateInfo && candidateInfo.email),
+            hasJobRole: !!jobRole
+          }
+        });
+      }
+      
       // Find the existing candidate by email
       const candidatesWithEmail = await storage.findCandidatesByEmail(candidateInfo.email);
       let candidateId = null;
@@ -1343,17 +1442,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         email: candidateInfo.email,
         token: invitationToken,
         jobRole,
-        skillset,
+        skillset: skillset || 'Not specified',
         status: 'pending',
         candidateInfo: {
-          name: candidateInfo.name,
+          name: candidateInfo.name || 'Not specified',
           email: candidateInfo.email,
-          phone: candidateInfo.phone,
-          resumeText: `Job Role: ${jobRole}\nRequired Skills: ${skillset}\nCandidate: ${candidateInfo.name} (${candidateInfo.email})`
+          phone: candidateInfo.phone || 'Not specified',
+          resumeText: `Job Role: ${jobRole}\nRequired Skills: ${skillset || 'Not specified'}\nCandidate: ${candidateInfo.name || 'Not specified'} (${candidateInfo.email})`
         }
       });
       
-      await sendInterviewInvitation(candidateInfo.email, candidateInfo.name, jobRole, skillset, invitationToken, candidateInfo);
+      await sendInterviewInvitation(candidateInfo.email, candidateInfo.name || 'Not specified', jobRole, skillset || 'Not specified', invitationToken, candidateInfo);
       res.json({ success: true, message: `Invitation sent to ${candidateInfo.email}`, invitationId: invitation.id, token: invitationToken });
     } catch (error) {
       console.error("Error sending interview invite:", error);

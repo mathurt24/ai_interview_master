@@ -5,6 +5,16 @@ import { setupVite } from "./vite";
 import { registerRoutes } from "./routes";
 import { log } from "./vite";
 
+// Load environment variables from .env file
+import dotenv from 'dotenv';
+dotenv.config();
+
+// Debug: Check if environment variables are loaded
+console.log('Environment check:');
+console.log('OPENAI_API_KEY:', process.env.OPENAI_API_KEY ? 'Found' : 'Not found');
+console.log('GEMINI_API_KEY:', process.env.GEMINI_API_KEY ? 'Found' : 'Not found');
+console.log('NODE_ENV:', process.env.NODE_ENV);
+
 const app = express();
 const port = process.env.PORT || 5000;
 

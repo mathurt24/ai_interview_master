@@ -77,7 +77,13 @@ export default function AdminResumeUpload() {
 
       const data = await response.json();
       setExtractedInfo(data);
-      setInviteEmail(data.email);
+      
+      // Set invite email only if it's valid, otherwise leave it empty for manual input
+      if (data.email && data.email !== 'Not specified' && data.email.trim() !== '') {
+        setInviteEmail(data.email);
+      } else {
+        setInviteEmail(''); // Clear any previous value
+      }
       
       // Auto-populate skillset from resume if available
       if (data.skillset && data.skillset.length > 0) {
@@ -109,26 +115,44 @@ export default function AdminResumeUpload() {
       return;
     }
 
+    if (!inviteEmail || inviteEmail.trim() === '' || inviteEmail === 'Not specified') {
+      toast({
+        title: "Invalid Email",
+        description: "Please enter a valid email address for the candidate.",
+        variant: "destructive"
+      });
+      return;
+    }
+
     setSendingInvite(true);
     try {
+      const requestBody = {
+        candidateInfo: {
+          ...extractedInfo,
+          email: inviteEmail.trim() // Use the manually entered email from the dialog
+        },
+        jobRole,
+        skillset
+      };
+
+      console.log('Sending invitation request:', requestBody);
+
       const response = await fetch('/api/admin/send-interview-invite', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({
-          candidateInfo: {
-            ...extractedInfo,
-            email: inviteEmail // Use the manually entered email from the dialog
-          },
-          jobRole,
-          skillset
-        })
+        body: JSON.stringify(requestBody)
       });
 
       if (!response.ok) {
-        throw new Error('Failed to send interview invite');
+        const errorData = await response.json();
+        console.error('Server error response:', errorData);
+        throw new Error(errorData.message || 'Failed to send interview invite');
       }
+
+      const result = await response.json();
+      console.log('Invitation sent successfully:', result);
 
       toast({
         title: "Invitation Sent",
@@ -141,10 +165,12 @@ export default function AdminResumeUpload() {
       setJobRole('');
       setSkillset('');
       setExtractedInfo(null);
+      setInviteEmail('');
     } catch (error) {
+      console.error('Error sending invitation:', error);
       toast({
         title: "Failed to Send Invite",
-        description: "Failed to send interview invitation. Please try again.",
+        description: error instanceof Error ? error.message : "Failed to send interview invitation. Please try again.",
         variant: "destructive"
       });
     } finally {
@@ -334,13 +360,18 @@ export default function AdminResumeUpload() {
           </DialogHeader>
           <div className="space-y-4">
             <div>
-              <Label htmlFor="inviteEmail">Email Address</Label>
+              <Label htmlFor="inviteEmail">Email Address *</Label>
               <Input
                 id="inviteEmail"
                 value={inviteEmail}
                 onChange={(e) => setInviteEmail(e.target.value)}
                 placeholder="candidate@example.com"
+                required
+                className={!inviteEmail || inviteEmail.trim() === '' ? 'border-red-300' : ''}
               />
+              {(!inviteEmail || inviteEmail.trim() === '') && (
+                <p className="text-xs text-red-500 mt-1">Email address is required</p>
+              )}
             </div>
             <div className="bg-gray-50 p-4 rounded-lg">
               <h4 className="font-medium mb-2">Invitation Details:</h4>
@@ -359,7 +390,10 @@ export default function AdminResumeUpload() {
             <Button variant="secondary" onClick={() => setShowInviteDialog(false)}>
               Cancel
             </Button>
-            <Button onClick={handleSendInvite} disabled={sendingInvite}>
+            <Button 
+              onClick={handleSendInvite} 
+              disabled={sendingInvite || !inviteEmail || inviteEmail.trim() === '' || inviteEmail === 'Not specified'}
+            >
               {sendingInvite ? 'Sending...' : 'Send Invitation'}
             </Button>
           </DialogFooter>
