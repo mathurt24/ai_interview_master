@@ -1,3 +1,6 @@
+// Vercel API for AI Interview Master - Updated for better file handling
+// This endpoint handles resume information extraction with improved error handling
+
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
