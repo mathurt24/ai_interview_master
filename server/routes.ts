@@ -27,9 +27,24 @@ const upload = multer({
 // Helper function to extract text from file buffer
 async function extractTextFromFile(buffer: Buffer, mimetype: string, filename: string): Promise<string> {
   try {
-    if (mimetype === 'text/plain') {
-      return buffer.toString('utf-8');
+    console.log(`Processing file: ${filename} with mimetype: ${mimetype}`);
+    
+    // Handle text-based files
+    if (mimetype === 'text/plain' || 
+        mimetype === 'text/javascript' || 
+        mimetype === 'text/typescript' ||
+        mimetype === 'application/javascript' ||
+        mimetype === 'application/typescript' ||
+        filename.endsWith('.txt') ||
+        filename.endsWith('.js') ||
+        filename.endsWith('.ts') ||
+        filename.endsWith('.tsx') ||
+        filename.endsWith('.jsx')) {
+      const text = buffer.toString('utf-8');
+      console.log(`Text file processed, length: ${text.length}`);
+      return text;
     }
+    
     if (mimetype === 'application/pdf') {
       try {
         // Try unpdf first for robust PDF text extraction
@@ -58,7 +73,18 @@ async function extractTextFromFile(buffer: Buffer, mimetype: string, filename: s
       }
     }
     
-    // For other file types (DOCX, etc.), conservative fallback
+    // For other file types (DOCX, etc.), try to extract as text first
+    try {
+      const text = buffer.toString('utf-8');
+      if (text.trim().length > 0) {
+        console.log(`Generic file processed as text, length: ${text.length}`);
+        return text;
+      }
+    } catch (textError) {
+      console.log("Could not extract as text, using fallback");
+    }
+    
+    // Final fallback
     return `Resume extracted from ${filename}`;
   } catch (error) {
     console.error("Error extracting text from file:", error);
@@ -252,6 +278,8 @@ async function fallbackExtraction(resumeText: string, filename?: string): Promis
   skillset: string[] 
 }> {
   try {
+    console.log("Running fallback extraction on text length:", resumeText.length);
+    
     // Basic regex patterns for fallback
     const emailPattern = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/g;
     const phonePattern = /(\+?1?[-.\s]?)?\(?([0-9]{3})\)?[-.\s]?([0-9]{3})[-.\s]?([0-9]{4})/;
@@ -261,8 +289,10 @@ async function fallbackExtraction(resumeText: string, filename?: string): Promis
     let email = 'Not specified';
     if (emailMatch && emailMatch[0]) {
       const foundEmail = emailMatch[0];
-      if (!foundEmail.includes('example.com') && !foundEmail.includes('test.com')) {
+      // Filter out obvious fake emails but allow legitimate test data
+      if (!foundEmail.includes('fake.com') && !foundEmail.includes('dummy.com') && !foundEmail.includes('test.com')) {
         email = foundEmail;
+        console.log('Fallback extracted email:', email);
       }
     }
     
@@ -271,27 +301,84 @@ async function fallbackExtraction(resumeText: string, filename?: string): Promis
     let phone = 'Not specified';
     if (phoneMatch && phoneMatch[0]) {
       const foundPhone = phoneMatch[0];
-      if (!foundPhone.includes('555') && !foundPhone.includes('123')) {
+      // Filter out obvious fake phones but allow legitimate test data
+      if (!foundPhone.includes('000000') && !foundPhone.includes('123456')) {
         phone = foundPhone;
+        console.log('Fallback extracted phone:', phone);
       }
     }
     
-    // Extract name from filename
+    // Extract name from resume text (look for patterns like "JOHN DOE" or "John Doe")
     let name = 'Not specified';
-    if (filename) {
-      const filenameMatch = filename.match(/^([A-Z][a-z]+)/);
-      if (filenameMatch) {
-        name = filenameMatch[1];
+    const namePatterns = [
+      /^([A-Z][A-Z\s]+[A-Z])\s*$/m,  // ALL CAPS names like "JOHN DOE"
+      /^([A-Z][a-z]+\s+[A-Z][a-z]+)\s*$/m,  // Title case names like "John Doe"
+      /^([A-Z][a-z]+)\s*$/m  // Single capitalized word
+    ];
+    
+    for (const pattern of namePatterns) {
+      const nameMatch = resumeText.match(pattern);
+      if (nameMatch && nameMatch[1]) {
+        const candidateName = nameMatch[1].trim();
+        if (candidateName.length > 2 && candidateName.length < 50) {
+          name = candidateName;
+          console.log('Fallback extracted name:', name);
+          break;
+        }
       }
     }
+    
+    // Extract designation (look for job titles)
+    let designation = 'Not specified';
+    const designationPatterns = [
+      /(?:Software Engineer|Developer|Programmer|QA Engineer|DevOps Engineer|Frontend Developer|Backend Developer|Full Stack Developer|Team Lead|Manager|Senior|Junior)/i
+    ];
+    
+    for (const pattern of designationPatterns) {
+      const designationMatch = resumeText.match(pattern);
+      if (designationMatch && designationMatch[0]) {
+        designation = designationMatch[0];
+        console.log('Fallback extracted designation:', designation);
+        break;
+      }
+    }
+    
+    // Extract past companies (look for company-like patterns)
+    const companies: string[] = [];
+    const companyPattern = /(?:at|with|worked\s+at|experience\s+at)\s+([A-Z][a-zA-Z\s&.,]+(?:Inc|LLC|Ltd|Corp|Company|Technologies|Tech|Solutions))/gi;
+    let companyMatch;
+    while ((companyMatch = companyPattern.exec(resumeText)) !== null) {
+      if (companyMatch[1] && !companies.includes(companyMatch[1].trim())) {
+        companies.push(companyMatch[1].trim());
+      }
+    }
+    console.log('Fallback extracted companies:', companies);
+    
+    // Extract skillset (look for technical skills)
+    const skills: string[] = [];
+    const skillPatterns = [
+      /(?:React|Node\.js|TypeScript|JavaScript|Python|Java|AWS|Docker|Kubernetes|PostgreSQL|MongoDB|Redis|Express\.js|GraphQL|HTML|CSS)/gi
+    ];
+    
+    for (const pattern of skillPatterns) {
+      const skillMatches = resumeText.match(pattern);
+      if (skillMatches) {
+        for (const skill of skillMatches) {
+          if (!skills.includes(skill) && skill.length > 2) {
+            skills.push(skill);
+          }
+        }
+      }
+    }
+    console.log('Fallback extracted skills:', skills);
     
     return {
       name,
       email,
       phone,
-      designation: 'Not specified',
-      pastCompanies: [],
-      skillset: []
+      designation,
+      pastCompanies: companies,
+      skillset: skills
     };
   } catch (error) {
     console.error("Error in fallback extraction:", error);
