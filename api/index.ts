@@ -320,7 +320,7 @@ function handleExtractResumeInfo(req: VercelRequest, res: VercelResponse) {
         }
         
         // Extract information using the actual logic
-        const extractedInfo = extractCandidateInfoFromText(resumeText, filename);
+        const extractedInfo = await extractCandidateInfoFromText(resumeText, filename);
         
         console.log('Successfully extracted info:', extractedInfo);
         
@@ -469,9 +469,108 @@ function handleInterviews(req: VercelRequest, res: VercelResponse) {
 }
 
 // Helper function to extract candidate information from resume text
-function extractCandidateInfoFromText(resumeText: string, filename: string) {
+async function extractCandidateInfoFromText(resumeText: string, filename: string) {
   console.log('Extracting info from resume text (first 500 chars):', resumeText.substring(0, 500));
   console.log('Filename:', filename);
+  
+  // Try OpenAI extraction first
+  const apiKey = process.env.OPENAI_API_KEY;
+  console.log("OpenAI API key status:", apiKey ? `Found (${apiKey.substring(0, 10)}...)` : "Not found");
+  
+  if (apiKey) {
+    try {
+      const prompt = `
+You are an expert resume parser. Extract the following information from this resume text and return ONLY a valid JSON object with these exact fields:
+
+{
+  "name": "Full Name",
+  "email": "Email Address", 
+  "phone": "Phone Number",
+  "designation": "Current/Recent Job Title",
+  "pastCompanies": ["Company 1", "Company 2", "Company 3"],
+  "skillset": ["Skill 1", "Skill 2", "Skill 3", "Skill 4", "Skill 5"]
+}
+
+Rules:
+- Extract the person's full name (first and last name) - look for patterns like "NAME" at the top or in headers
+- Extract the primary email address (not example/test emails like candidate@example.com)
+- Extract the primary phone number (look for +1, country codes, or standard formats)
+- Extract their current or most recent job title/designation from the resume
+- Extract up to 5 past companies they've worked for (look for company names in experience section)
+- Extract up to 10 key technical skills, programming languages, tools, or technologies from skills section
+- If any field cannot be found, use "Not specified" for text fields or empty array for arrays
+- Return ONLY the JSON object, no other text or explanations
+- Be very precise and accurate in extraction
+
+Resume text:
+${resumeText}
+`;
+
+      console.log('Sending resume to OpenAI for extraction...');
+      
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          messages: [
+            {
+              role: 'system',
+              content: 'You are an expert resume parser. Extract candidate information and return ONLY a valid JSON object.'
+            },
+            {
+              role: 'user',
+              content: prompt
+            }
+          ],
+          temperature: 0.1,
+          max_tokens: 500
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`OpenAI API error: ${response.status}`);
+      }
+
+      const rawBody = await response.text();
+      console.log('OpenAI extraction response:', rawBody);
+
+      const data = JSON.parse(rawBody);
+      const text = data.choices?.[0]?.message?.content;
+
+      if (!text) {
+        throw new Error('No response text from OpenAI');
+      }
+
+      // Extract JSON from the response
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) {
+        throw new Error('No JSON found in OpenAI response');
+      }
+
+      const extractedData = JSON.parse(jsonMatch[0]);
+      console.log('OpenAI extracted info:', extractedData);
+      
+      return {
+        name: extractedData.name || 'Not specified',
+        email: extractedData.email || 'Not specified',
+        phone: extractedData.phone || 'Not specified',
+        designation: extractedData.designation || 'Not specified',
+        pastCompanies: extractedData.pastCompanies || [],
+        skillset: extractedData.skillset || []
+      };
+      
+    } catch (error) {
+      console.error("Error extracting candidate info with OpenAI:", error);
+      console.log("Falling back to regex extraction...");
+    }
+  }
+  
+  // Fallback to regex-based extraction
+  console.log("Using fallback regex extraction");
   
   // Extract name from filename first (most reliable)
   const nameFromFilename = filename ? filename.replace(/\.(pdf|doc|docx|txt)$/i, '').replace(/[_-]/g, ' ').trim() : '';
@@ -568,30 +667,16 @@ function extractCandidateInfoFromText(resumeText: string, filename: string) {
     if (nameMatch) {
       name = nameMatch[1];
     } else {
-      // Look for name patterns in the first few lines
-      for (const line of lines) {
-        const namePattern = /^([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})/;
-        const match = line.match(namePattern);
-        if (match && match[1].length > 3) {
-          name = match[1];
-          break;
-        }
-      }
-      if (!name || name.length < 2) {
-        name = 'Not specified';
-      }
+      name = 'Not specified';
     }
   }
   
-  const result = {
-    name: name,
-    email: email,
-    phone: phone,
-    designation: designation,
+  return {
+    name: name || 'Not specified',
+    email: email || 'Not specified',
+    phone: phone || 'Not specified',
+    designation: designation || 'Not specified',
     pastCompanies: companies.length > 0 ? companies : ['Not specified'],
     skillset: foundSkills.length > 0 ? foundSkills : ['Not specified']
   };
-  
-  console.log('Final extracted info:', result);
-  return result;
 } 
