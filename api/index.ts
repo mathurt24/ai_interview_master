@@ -74,12 +74,16 @@ function handleLogin(req: VercelRequest, res: VercelResponse) {
     }
 
     // For now, return a mock candidate response
-    return res.status(200).json({
-      id: 1,
-      email: email,
-      role: 'candidate'
-    });
+    // In production, you'd connect to your database
+    if (email === 'candidate@example.com' && password === 'password') {
+      return res.status(200).json({
+        id: 1,
+        email: 'candidate@example.com',
+        role: 'candidate'
+      });
+    }
 
+    return res.status(401).json({ message: 'Invalid email or password' });
   } catch (error) {
     return res.status(400).json({ message: 'Invalid request data' });
   }
@@ -112,6 +116,7 @@ function handleSignup(req: VercelRequest, res: VercelResponse) {
 
 function handleAdminCandidates(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'GET') {
+    // Return mock candidates data
     return res.status(200).json([
       {
         id: 1,
@@ -125,6 +130,8 @@ function handleAdminCandidates(req: VercelRequest, res: VercelResponse) {
   }
 
   if (req.method === 'DELETE') {
+    const { id } = req.query;
+    // Mock successful deletion
     return res.status(200).json({ success: true });
   }
 
@@ -133,10 +140,13 @@ function handleAdminCandidates(req: VercelRequest, res: VercelResponse) {
 
 function handleAdminInterviews(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'GET') {
+    // Return mock interviews data
     return res.status(200).json([]);
   }
 
   if (req.method === 'DELETE') {
+    const { id } = req.query;
+    // Mock successful deletion
     return res.status(200).json({ success: true });
   }
 
@@ -148,6 +158,7 @@ function handleAdminStats(req: VercelRequest, res: VercelResponse) {
     return res.status(405).json({ message: 'Method not allowed' });
   }
 
+  // Return mock stats data
   return res.status(200).json({
     total: 1,
     recommended: 0,
@@ -162,6 +173,7 @@ function handleAdminAIProvider(req: VercelRequest, res: VercelResponse) {
   }
 
   if (req.method === 'POST') {
+    const { provider } = req.body;
     return res.status(200).json({ success: true, message: "AI provider updated" });
   }
 
@@ -174,6 +186,7 @@ function handleAdminVoiceProvider(req: VercelRequest, res: VercelResponse) {
   }
 
   if (req.method === 'POST') {
+    const { provider } = req.body;
     return res.status(200).json({ success: true, message: "Voice provider updated" });
   }
 
@@ -182,6 +195,7 @@ function handleAdminVoiceProvider(req: VercelRequest, res: VercelResponse) {
 
 function handleAdminResumeUpload(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'POST') {
+    // Mock resume upload response
     return res.status(200).json({
       success: true,
       message: "Resume uploaded successfully"
@@ -193,6 +207,7 @@ function handleAdminResumeUpload(req: VercelRequest, res: VercelResponse) {
 
 function handleAdminExtractResumeInfo(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'POST') {
+    // Mock resume extraction response
     return res.status(200).json({
       name: "Test Candidate",
       email: "candidate@example.com",
@@ -208,6 +223,7 @@ function handleAdminExtractResumeInfo(req: VercelRequest, res: VercelResponse) {
 
 function handleAdminSendInterviewInvite(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'POST') {
+    // Mock interview invitation response
     return res.status(200).json({
       success: true,
       message: "Interview invitation sent successfully",
@@ -220,6 +236,7 @@ function handleAdminSendInterviewInvite(req: VercelRequest, res: VercelResponse)
 
 function handleInvitations(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'GET') {
+    // Return mock invitations data
     return res.status(200).json([]);
   }
 
@@ -228,20 +245,16 @@ function handleInvitations(req: VercelRequest, res: VercelResponse) {
 
 function handleInterviews(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'GET') {
+    // Return mock interviews data
     return res.status(200).json([]);
   }
 
   if (req.method === 'POST') {
+    // Mock interview creation
     return res.status(200).json({
       id: Math.floor(Math.random() * 1000) + 1,
       candidateId: 1,
-      questions: [
-        {
-          id: 1,
-          questionText: "Tell me about your experience with React.",
-          category: "Technical"
-        }
-      ],
+      questions: [],
       status: "in_progress",
       createdAt: new Date().toISOString()
     });
