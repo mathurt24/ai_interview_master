@@ -5,6 +5,18 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import formidable from 'formidable';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  // Add a simple test endpoint
+  if (req.url === '/api/test-env' || req.url?.includes('/test-env')) {
+    return res.status(200).json({
+      message: 'Environment variables test',
+      OPENAI_API_KEY: process.env.OPENAI_API_KEY ? `Found (${process.env.OPENAI_API_KEY.substring(0, 10)}...)` : "Not found",
+      OPENAI_API_KEY_LENGTH: process.env.OPENAI_API_KEY ? process.env.OPENAI_API_KEY.length : 0,
+      NODE_ENV: process.env.NODE_ENV,
+      VERCEL_ENV: process.env.VERCEL_ENV,
+      allEnvKeys: Object.keys(process.env).filter(key => key.includes('OPENAI') || key.includes('GEMINI'))
+    });
+  }
+
   const { pathname } = new URL(req.url || '', `http://${req.headers.host}`);
   
   // Handle different API routes
