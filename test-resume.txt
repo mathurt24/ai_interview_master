@@ -1,0 +1,7 @@
+JOHN DOE
+Software Engineer
+john.doe@example.com
++1-555-123-4567
+
+PROFESSIONAL SUMMARY
+Experienced software developer with expertise in React, Node.js, TypeScript, and cloud platforms.

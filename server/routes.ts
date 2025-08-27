@@ -401,10 +401,11 @@ function generateInvitationToken(candidateId: number, email: string): string {
 }
 
 // Helper function to send interview invitation email
-async function sendInterviewInvitation(email: string, name: string, jobRole: string, skillset: string, token: string): Promise<void> {
+async function sendInterviewInvitation(email: string, name: string, jobRole: string, skillset: string, token: string, candidateDetails?: any): Promise<void> {
   try {
     const invitationLink = `${process.env.FRONTEND_URL || 'http://localhost:5174'}/signup?token=${token}`;
     
+    // Enhanced email template with more candidate details
     const emailHtml = `
       <!DOCTYPE html>
       <html>
@@ -416,8 +417,14 @@ async function sendInterviewInvitation(email: string, name: string, jobRole: str
           .container { max-width: 600px; margin: 0 auto; padding: 20px; }
           .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
           .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }
-          .button { display: inline-block; background: #667eea; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; margin: 20px 0; }
+          .button { display: inline-block; background: #667eea; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; margin: 20px 0; font-weight: bold; }
           .footer { text-align: center; margin-top: 30px; color: #666; font-size: 14px; }
+          .candidate-details { background: #e8f4fd; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #667eea; }
+          .detail-row { display: flex; justify-content: space-between; margin: 8px 0; }
+          .detail-label { font-weight: bold; color: #555; }
+          .detail-value { color: #333; }
+          .skills-section { background: #f0f8ff; padding: 15px; border-radius: 6px; margin: 15px 0; }
+          .skill-tag { display: inline-block; background: #667eea; color: white; padding: 4px 12px; border-radius: 15px; margin: 2px; font-size: 12px; }
         </style>
       </head>
       <body>
@@ -430,11 +437,54 @@ async function sendInterviewInvitation(email: string, name: string, jobRole: str
             <h2>Dear ${name},</h2>
             <p>Congratulations! You have been invited to interview for the <strong>${jobRole}</strong> position.</p>
             
-            <h3>📋 Position Details:</h3>
+            ${candidateDetails ? `
+            <div class="candidate-details">
+              <h3>📋 Your Profile Summary:</h3>
+              <div class="detail-row">
+                <span class="detail-label">Name:</span>
+                <span class="detail-value">${candidateDetails.name || name}</span>
+              </div>
+              ${candidateDetails.email ? `
+              <div class="detail-row">
+                <span class="detail-label">Email:</span>
+                <span class="detail-value">${candidateDetails.email}</span>
+              </div>
+              ` : ''}
+              ${candidateDetails.phone ? `
+              <div class="detail-row">
+                <span class="detail-label">Phone:</span>
+                <span class="detail-value">${candidateDetails.phone}</span>
+              </div>
+              ` : ''}
+              ${candidateDetails.designation ? `
+              <div class="detail-row">
+                <span class="detail-label">Current Role:</span>
+                <span class="detail-value">${candidateDetails.designation}</span>
+              </div>
+              ` : ''}
+              ${candidateDetails.pastCompanies && candidateDetails.pastCompanies.length > 0 ? `
+              <div class="detail-row">
+                <span class="detail-label">Experience:</span>
+                <span class="detail-value">${candidateDetails.pastCompanies.join(', ')}</span>
+              </div>
+              ` : ''}
+            </div>
+            ` : ''}
+            
+            <h3>🎯 Position Details:</h3>
             <ul>
               <li><strong>Role:</strong> ${jobRole}</li>
               <li><strong>Required Skills:</strong> ${skillset}</li>
             </ul>
+            
+            ${candidateDetails && candidateDetails.skillset && candidateDetails.skillset.length > 0 ? `
+            <div class="skills-section">
+              <h4>💼 Your Skills (from resume):</h4>
+              <div>
+                ${candidateDetails.skillset.map((skill: string) => `<span class="skill-tag">${skill}</span>`).join('')}
+              </div>
+            </div>
+            ` : ''}
             
             <h3>🚀 What to Expect:</h3>
             <ul>
@@ -442,10 +492,11 @@ async function sendInterviewInvitation(email: string, name: string, jobRole: str
               <li>Real-time question generation based on your resume</li>
               <li>Immediate feedback and scoring</li>
               <li>Professional evaluation process</li>
+              <li>Questions tailored to your skills and experience</li>
             </ul>
             
             <div style="text-align: center;">
-              <a href="${invitationLink}" class="button">Start Your Interview</a>
+              <a href="${invitationLink}" class="button">🚀 Start Your Interview</a>
             </div>
             
             <p><strong>Important:</strong> Please click the button above to create your account and begin the interview process. The link is unique to you and should not be shared.</p>
@@ -1302,7 +1353,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       });
       
-      await sendInterviewInvitation(candidateInfo.email, candidateInfo.name, jobRole, skillset, invitationToken);
+      await sendInterviewInvitation(candidateInfo.email, candidateInfo.name, jobRole, skillset, invitationToken, candidateInfo);
       res.json({ success: true, message: `Invitation sent to ${candidateInfo.email}`, invitationId: invitation.id, token: invitationToken });
     } catch (error) {
       console.error("Error sending interview invite:", error);

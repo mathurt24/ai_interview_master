@@ -17,15 +17,35 @@ export interface EmailData {
 
 class EmailService {
   private config: EmailConfig = {
-    provider: 'console',
+    provider: 'sendgrid', // Default to SendGrid instead of console
     fromEmail: 'noreply@firstroundai.com',
     fromName: 'FirstroundAI'
   };
 
   async initialize() {
     try {
-      // Load email configuration from database
-      const provider = await storage.getSetting('email_provider') || 'console';
+      // First try to load from environment variables
+      const envApiKey = process.env.SENDGRID_API_KEY;
+      const envFromEmail = process.env.EMAIL_FROM;
+      const envFromName = process.env.EMAIL_FROM_NAME;
+      
+      if (envApiKey && envApiKey !== 'SG.your-sendgrid-api-key-here') {
+        // Environment variables are set, use them
+        this.config = {
+          provider: 'sendgrid',
+          apiKey: envApiKey,
+          fromEmail: envFromEmail || 'noreply@firstroundai.com',
+          fromName: envFromName || 'FirstroundAI'
+        };
+        
+        // Initialize SendGrid
+        sgMail.setApiKey(envApiKey);
+        console.log('SendGrid initialized with environment API key');
+        return;
+      }
+      
+      // Fallback to database configuration
+      const provider = await storage.getSetting('email_provider') || 'sendgrid';
       const apiKey = await storage.getSetting('sendgrid_api_key');
       const fromEmail = await storage.getSetting('email_from_address') || 'noreply@firstroundai.com';
       const fromName = await storage.getSetting('email_from_name') || 'FirstroundAI';
@@ -38,11 +58,12 @@ class EmailService {
       };
 
       // Initialize SendGrid if configured
-      if (this.config.provider === 'sendgrid' && this.config.apiKey) {
+      if (this.config.provider === 'sendgrid' && this.config.apiKey && this.config.apiKey !== 'SG.your-sendgrid-api-key-here') {
         sgMail.setApiKey(this.config.apiKey);
-        console.log('SendGrid initialized with API key');
+        console.log('SendGrid initialized with database API key');
       } else {
-        console.log('Email service using console mode');
+        console.log('Email service using console mode - no valid SendGrid API key found');
+        this.config.provider = 'console';
       }
     } catch (error) {
       console.error('Failed to initialize email service:', error);
@@ -52,14 +73,16 @@ class EmailService {
 
   async sendEmail(emailData: EmailData): Promise<boolean> {
     try {
-      if (this.config.provider === 'sendgrid' && this.config.apiKey) {
+      if (this.config.provider === 'sendgrid' && this.config.apiKey && this.config.apiKey !== 'SG.your-sendgrid-api-key-here') {
         return await this.sendWithSendGrid(emailData);
       } else {
+        console.log('Falling back to console mode - no valid SendGrid configuration');
         return await this.sendToConsole(emailData);
       }
     } catch (error) {
       console.error('Failed to send email:', error);
       // Fallback to console
+      console.log('Falling back to console mode due to error');
       return await this.sendToConsole(emailData);
     }
   }
@@ -78,10 +101,10 @@ class EmailService {
       };
 
       await sgMail.send(msg);
-      console.log(`Email sent via SendGrid to: ${emailData.to}`);
+      console.log(`✅ Email sent successfully via SendGrid to: ${emailData.to}`);
       return true;
     } catch (error) {
-      console.error('SendGrid error:', error);
+      console.error('❌ SendGrid error:', error);
       throw error;
     }
   }
@@ -134,7 +157,7 @@ class EmailService {
 
   async testConnection(): Promise<{ success: boolean; message: string }> {
     try {
-      if (this.config.provider === 'sendgrid' && this.config.apiKey) {
+      if (this.config.provider === 'sendgrid' && this.config.apiKey && this.config.apiKey !== 'SG.your-sendgrid-api-key-here') {
         // Test SendGrid connection by sending a test email to a test address
         const testEmail: EmailData = {
           to: 'test@example.com',
