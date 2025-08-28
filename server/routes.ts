@@ -69,13 +69,16 @@ async function extractTextFromFile(buffer: Buffer, mimetype: string, filename: s
           console.log(`PDF extracted successfully with unpdf, text length: ${fullText.length}`);
           return fullText;
         } else {
-          console.warn("unpdf returned empty text; using fallback");
-          return `Resume extracted from ${filename}`;
+          console.warn("unpdf returned empty text; using filename-based extraction");
+          // Try to extract meaningful information from filename
+          const nameFromFilename = extractNameFromFilename(filename);
+          return `Name: ${nameFromFilename}\nResume extracted from ${filename}\nPlease review and update candidate information manually.`;
         }
       } catch (pdfError) {
         console.error("PDF parsing failed with unpdf:", pdfError);
-        // Conservative fallback
-        return `Resume extracted from ${filename}`;
+        // Enhanced fallback with filename analysis
+        const nameFromFilename = extractNameFromFilename(filename);
+        return `Name: ${nameFromFilename}\nResume extracted from ${filename}\nPDF parsing failed. Please review and update candidate information manually.`;
       }
     }
     
@@ -87,14 +90,42 @@ async function extractTextFromFile(buffer: Buffer, mimetype: string, filename: s
         return text;
       }
     } catch (textError) {
-      console.log("Could not extract as text, using fallback");
+      console.log("Could not extract as text, using filename-based extraction");
     }
     
-    // Final fallback
-    return `Resume extracted from ${filename}`;
+    // Final fallback with filename analysis
+    const nameFromFilename = extractNameFromFilename(filename);
+    return `Name: ${nameFromFilename}\nResume extracted from ${filename}\nPlease review and update candidate information manually.`;
   } catch (error) {
     console.error("Error extracting text from file:", error);
-    return `Error processing file: ${error}`;
+    const nameFromFilename = extractNameFromFilename(filename);
+    return `Name: ${nameFromFilename}\nResume extracted from ${filename}\nError processing file. Please review and update candidate information manually.`;
+  }
+}
+
+// Helper function to extract name from filename
+function extractNameFromFilename(filename: string): string {
+  try {
+    // Remove file extension
+    const nameWithoutExt = filename.replace(/\.[^/.]+$/, "");
+    
+    // Handle common filename patterns
+    if (nameWithoutExt.includes('_')) {
+      // Pattern: "First_Last.pdf" -> "First Last"
+      return nameWithoutExt.replace(/_/g, ' ');
+    } else if (nameWithoutExt.includes('-')) {
+      // Pattern: "First-Last.pdf" -> "First Last"
+      return nameWithoutExt.replace(/-/g, ' ');
+    } else if (nameWithoutExt.includes(' ')) {
+      // Pattern: "First Last.pdf" -> "First Last"
+      return nameWithoutExt;
+    } else {
+      // Single word or unknown pattern
+      return nameWithoutExt;
+    }
+  } catch (error) {
+    console.error("Error extracting name from filename:", error);
+    return "Candidate";
   }
 }
 
@@ -209,24 +240,27 @@ async function extractCandidateInfo(resumeText: string, filename?: string): Prom
     console.log("Extracting info from resume text (first 500 chars):", resumeText.substring(0, 500));
     console.log("Filename:", filename);
     
-    // Use OpenAI to extract information intelligently
-    const apiKey = process.env.OPENAI_API_KEY;
-    console.log("OpenAI API key status:", apiKey ? `Found (${apiKey.substring(0, 10)}...)` : "Not found");
-    if (!apiKey) {
-      console.log("OpenAI API key not found, using fallback extraction");
-      const base = await fallbackExtraction(resumeText, filename);
-      const refined = refineContactFromText(resumeText, filename, base);
+    // Check if this is a minimal fallback text (from PDF parsing failure)
+    if (resumeText.includes('Resume extracted from') && resumeText.length < 200) {
+      console.log("Detected minimal fallback text, using filename-based extraction");
+      const nameFromFilename = extractNameFromFilename(filename || 'resume.pdf');
       return {
-        name: refined.name || base.name,
-        email: refined.email || base.email,
-        phone: refined.phone || base.phone,
-        designation: base.designation,
-        pastCompanies: base.pastCompanies,
-        skillset: base.skillset,
+        name: nameFromFilename,
+        email: 'Not specified',
+        phone: 'Not specified',
+        designation: 'Not specified',
+        pastCompanies: [],
+        skillset: []
       };
     }
-
-    const prompt = `
+    
+    // Use OpenAI to extract information intelligently
+    const openaiKey = process.env.OPENAI_API_KEY;
+    console.log("OpenAI API key status:", openaiKey ? `Found (${openaiKey.substring(0, 10)}...)` : "Not found");
+    
+    if (openaiKey) {
+      try {
+        const prompt = `
 You are an expert resume parser. Extract the following information from this resume text and return ONLY a valid JSON object with these exact fields:
 
 {
@@ -253,79 +287,181 @@ Resume text:
 ${resumeText}
 `;
 
-    console.log('Sending resume to OpenAI for extraction...');
-    
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: { 
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`
-      },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        messages: [
-          {
-            role: 'system',
-            content: 'You are an expert resume parser. Extract candidate information and return ONLY a valid JSON object.'
+        console.log('Sending resume to OpenAI for extraction...');
+        
+        const response = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${openaiKey}`
           },
-          {
-            role: 'user',
-            content: prompt
-          }
-        ],
-        temperature: 0.1,
-        max_tokens: 500
-      })
-    });
+          body: JSON.stringify({
+            model: 'gpt-4o-mini',
+            messages: [
+              {
+                role: 'system',
+                content: 'You are an expert resume parser. Extract candidate information and return ONLY a valid JSON object.'
+              },
+              {
+                role: 'user',
+                content: prompt
+              }
+            ],
+            temperature: 0.1,
+            max_tokens: 500
+          })
+        });
 
-    if (!response.ok) {
-      throw new Error(`OpenAI API error: ${response.status}`);
+        if (!response.ok) {
+          throw new Error(`OpenAI API error: ${response.status}`);
+        }
+
+        const rawBody = await response.text();
+        console.log('OpenAI extraction response:', rawBody);
+
+        const data = JSON.parse(rawBody);
+        const text = data.choices?.[0]?.message?.content;
+
+        if (!text) {
+          throw new Error('No response text from OpenAI');
+        }
+
+        // Extract JSON from the response
+        const jsonMatch = text.match(/\{[\s\S]*\}/);
+        if (!jsonMatch) {
+          throw new Error('No JSON found in OpenAI response');
+        }
+
+        const extractedInfo = JSON.parse(jsonMatch[0]);
+        console.log('OpenAI extracted info:', extractedInfo);
+
+        // Validate and clean the extracted data
+        const base = {
+          name: extractedInfo.name || 'Not specified',
+          email: extractedInfo.email || 'Not specified',
+          phone: extractedInfo.phone || 'Not specified',
+          designation: extractedInfo.designation || 'Not specified',
+          pastCompanies: Array.isArray(extractedInfo.pastCompanies) ? extractedInfo.pastCompanies : [],
+          skillset: Array.isArray(extractedInfo.skillset) ? extractedInfo.skillset : []
+        };
+
+        // If OpenAI couldn't provide email/phone/name, refine from raw text/filename
+        const refined = refineContactFromText(resumeText, filename, base);
+
+        return {
+          name: refined.name || base.name,
+          email: refined.email || base.email,
+          phone: refined.phone || base.phone,
+          designation: base.designation,
+          pastCompanies: base.pastCompanies,
+          skillset: base.skillset,
+        };
+      } catch (openaiError) {
+        console.error("OpenAI extraction failed:", openaiError);
+        console.log("Falling back to Gemini...");
+      }
     }
+    
+    // Try Gemini as fallback
+    const geminiKey = process.env.GEMINI_API_KEY;
+    console.log("Gemini API key status:", geminiKey ? `Found (${geminiKey.substring(0, 10)}...)` : "Not found");
+    
+    if (geminiKey) {
+      try {
+        const prompt = `
+You are an expert resume parser. Extract the following information from this resume text and return ONLY a valid JSON object with these exact fields:
 
-    const rawBody = await response.text();
-    console.log('OpenAI extraction response:', rawBody);
+{
+  "name": "Full Name",
+  "email": "Email Address", 
+  "phone": "Phone Number",
+  "designation": "Current/Recent Job Title",
+  "pastCompanies": ["Company 1", "Company 2", "Company 3"],
+  "skillset": ["Skill 1", "Skill 2", "Skill 3", "Skill 4", "Skill 5"]
+}
 
-    const data = JSON.parse(rawBody);
-    const text = data.choices?.[0]?.message?.content;
+Rules:
+- Extract the person's full name (first and last name) - look for patterns like "NAME" at the top or in headers
+- Extract the primary email address (not example/test emails like candidate@example.com)
+- Extract the primary phone number (look for +1, country codes, or standard formats)
+- Extract their current or most recent job title/designation from the resume
+- Extract up to 5 past companies they've worked for (look for company names in experience section)
+- Extract up to 10 key technical skills, programming languages, tools, or technologies from skills section
+- If any field cannot be found, use "Not specified" for text fields or empty array for arrays
+- Return ONLY the JSON object, no other text or explanations
+- Be very precise and accurate in extraction
 
-    if (!text) {
-      throw new Error('No response text from OpenAI');
+Resume text:
+${resumeText}
+`;
+
+        console.log('Sending resume to Gemini for extraction...');
+        
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`, {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            contents: [{
+              parts: [{
+                text: prompt
+              }]
+            }]
+          })
+        });
+
+        if (!response.ok) {
+          throw new Error(`Gemini API error: ${response.status}`);
+        }
+
+        const data = await response.json();
+        console.log('Gemini extraction response:', data);
+
+        const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+
+        if (!text) {
+          throw new Error('No response text from Gemini');
+        }
+
+        // Extract JSON from the response
+        const jsonMatch = text.match(/\{[\s\S]*\}/);
+        if (!jsonMatch) {
+          throw new Error('No JSON found in Gemini response');
+        }
+
+        const extractedInfo = JSON.parse(jsonMatch[0]);
+        console.log('Gemini extracted info:', extractedInfo);
+
+        // Validate and clean the extracted data
+        const base = {
+          name: extractedInfo.name || 'Not specified',
+          email: extractedInfo.email || 'Not specified',
+          phone: extractedInfo.phone || 'Not specified',
+          designation: extractedInfo.designation || 'Not specified',
+          pastCompanies: Array.isArray(extractedInfo.pastCompanies) ? extractedInfo.pastCompanies : [],
+          skillset: Array.isArray(extractedInfo.skillset) ? extractedInfo.skillset : []
+        };
+
+        // If Gemini couldn't provide email/phone/name, refine from raw text/filename
+        const refined = refineContactFromText(resumeText, filename, base);
+
+        return {
+          name: refined.name || base.name,
+          email: refined.email || base.email,
+          phone: refined.phone || base.phone,
+          designation: base.designation,
+          pastCompanies: base.pastCompanies,
+          skillset: base.skillset,
+        };
+      } catch (geminiError) {
+        console.error("Gemini extraction failed:", geminiError);
+        console.log("Falling back to compromise extraction...");
+      }
     }
-
-    // Extract JSON from the response
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-      throw new Error('No JSON found in OpenAI response');
-    }
-
-    const extractedInfo = JSON.parse(jsonMatch[0]);
-    console.log('OpenAI extracted info:', extractedInfo);
-
-    // Validate and clean the extracted data
-    const base = {
-      name: extractedInfo.name || 'Not specified',
-      email: extractedInfo.email || 'Not specified',
-      phone: extractedInfo.phone || 'Not specified',
-      designation: extractedInfo.designation || 'Not specified',
-      pastCompanies: Array.isArray(extractedInfo.pastCompanies) ? extractedInfo.pastCompanies : [],
-      skillset: Array.isArray(extractedInfo.skillset) ? extractedInfo.skillset : []
-    };
-
-    // If OpenAI couldn't provide email/phone/name, refine from raw text/filename
-    const refined = refineContactFromText(resumeText, filename, base);
-
-    return {
-      name: refined.name || base.name,
-      email: refined.email || base.email,
-      phone: refined.phone || base.phone,
-      designation: base.designation,
-      pastCompanies: base.pastCompanies,
-      skillset: base.skillset,
-    };
-
-  } catch (error) {
-    console.error("Error extracting candidate info with OpenAI:", error);
-    console.log("Falling back to compromise extraction...");
+    
+    // Final fallback to compromise extraction
+    console.log("All AI extraction failed, using compromise extraction...");
     
     // Try compromise extraction first
     const compromiseResult = await extractWithCompromise(resumeText, filename);
@@ -353,6 +489,20 @@ ${resumeText}
       pastCompanies: base.pastCompanies,
       skillset: base.skillset,
     };
+  } catch (error) {
+    console.error("Error extracting candidate info:", error);
+    console.log("Using filename-based extraction as last resort...");
+    
+    // Last resort: filename-based extraction
+    const nameFromFilename = extractNameFromFilename(filename || 'resume.pdf');
+    return {
+      name: nameFromFilename,
+      email: 'Not specified',
+      phone: 'Not specified',
+      designation: 'Not specified',
+      pastCompanies: [],
+      skillset: []
+    };
   }
 }
 
@@ -367,6 +517,20 @@ async function fallbackExtraction(resumeText: string, filename?: string): Promis
 }> {
   try {
     console.log("Running fallback extraction on text length:", resumeText.length);
+    
+    // Check if this is a minimal fallback text (from PDF parsing failure)
+    if (resumeText.includes('Resume extracted from') && resumeText.length < 200) {
+      console.log("Detected minimal fallback text, using filename-based extraction");
+      const nameFromFilename = extractNameFromFilename(filename || 'resume.pdf');
+      return {
+        name: nameFromFilename,
+        email: 'Not specified',
+        phone: 'Not specified',
+        designation: 'Not specified',
+        pastCompanies: [],
+        skillset: []
+      };
+    }
     
     // Basic regex patterns for fallback
     const emailPattern = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/g;
@@ -416,10 +580,19 @@ async function fallbackExtraction(resumeText: string, filename?: string): Promis
       }
     }
     
+    // If no name found in text, try filename
+    if (name === 'Not specified' && filename) {
+      const nameFromFilename = extractNameFromFilename(filename);
+      if (nameFromFilename && nameFromFilename !== 'Candidate') {
+        name = nameFromFilename;
+        console.log('Name extracted from filename (prioritized):', name);
+      }
+    }
+    
     // Extract designation (look for job titles)
     let designation = 'Not specified';
     const designationPatterns = [
-      /(?:Software Engineer|Developer|Programmer|QA Engineer|DevOps Engineer|Frontend Developer|Backend Developer|Full Stack Developer|Team Lead|Manager|Senior|Junior)/i
+      /(?:Software Engineer|Developer|Programmer|QA Engineer|DevOps Engineer|Frontend Developer|Backend Developer|Full Stack Developer|Team Lead|Manager|Senior|Junior|Associate|Lead)/i
     ];
     
     for (const pattern of designationPatterns) {
@@ -445,7 +618,7 @@ async function fallbackExtraction(resumeText: string, filename?: string): Promis
     // Extract skillset (look for technical skills)
     const skills: string[] = [];
     const skillPatterns = [
-      /(?:React|Node\.js|TypeScript|JavaScript|Python|Java|AWS|Docker|Kubernetes|PostgreSQL|MongoDB|Redis|Express\.js|GraphQL|HTML|CSS)/gi
+      /(?:React|Node\.js|TypeScript|JavaScript|Python|Java|AWS|Docker|Kubernetes|PostgreSQL|MongoDB|Redis|Express\.js|GraphQL|HTML|CSS|Selenium|Pytest|Robot Framework|Azure|Jenkins|GitLab|GitHub Actions)/gi
     ];
     
     for (const pattern of skillPatterns) {
@@ -470,8 +643,10 @@ async function fallbackExtraction(resumeText: string, filename?: string): Promis
     };
   } catch (error) {
     console.error("Error in fallback extraction:", error);
+    // Return filename-based extraction as last resort
+    const nameFromFilename = extractNameFromFilename(filename || 'resume.pdf');
     return {
-      name: 'Not specified',
+      name: nameFromFilename,
       email: 'Not specified',
       phone: 'Not specified',
       designation: 'Not specified',
