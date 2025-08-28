@@ -29,7 +29,7 @@ class EmailService {
       const envFromEmail = process.env.EMAIL_FROM;
       const envFromName = process.env.EMAIL_FROM_NAME;
       
-      if (envApiKey && envApiKey !== 'SG.your-sendgrid-api-key-here') {
+      if (envApiKey && envApiKey !== 'SG.your-sendgrid-api-key-here' && envApiKey.length > 20) {
         // Environment variables are set, use them
         this.config = {
           provider: 'sendgrid',
@@ -58,7 +58,7 @@ class EmailService {
       };
 
       // Initialize SendGrid if configured
-      if (this.config.provider === 'sendgrid' && this.config.apiKey && this.config.apiKey !== 'SG.your-sendgrid-api-key-here') {
+      if (this.config.provider === 'sendgrid' && this.config.apiKey && this.config.apiKey !== 'SG.your-sendgrid-api-key-here' && this.config.apiKey.length > 20) {
         sgMail.setApiKey(this.config.apiKey);
         console.log('SendGrid initialized with database API key');
       } else {
@@ -73,7 +73,7 @@ class EmailService {
 
   async sendEmail(emailData: EmailData): Promise<boolean> {
     try {
-      if (this.config.provider === 'sendgrid' && this.config.apiKey && this.config.apiKey !== 'SG.your-sendgrid-api-key-here') {
+      if (this.config.provider === 'sendgrid' && this.config.apiKey && this.config.apiKey !== 'SG.your-sendgrid-api-key-here' && this.config.apiKey.length > 20) {
         return await this.sendWithSendGrid(emailData);
       } else {
         console.log('Falling back to console mode - no valid SendGrid configuration');
@@ -103,8 +103,15 @@ class EmailService {
       await sgMail.send(msg);
       console.log(`✅ Email sent successfully via SendGrid to: ${emailData.to}`);
       return true;
-    } catch (error) {
+    } catch (error: any) {
       console.error('❌ SendGrid error:', error);
+      
+      // Check if it's a 403 Forbidden (likely API key issue)
+      if (error.code === 403) {
+        console.error('❌ SendGrid API key appears to be invalid or expired. Please check your SendGrid configuration.');
+        console.error('❌ Falling back to console mode for this email.');
+      }
+      
       throw error;
     }
   }
@@ -117,6 +124,15 @@ class EmailService {
     console.log('Body:');
     console.log(emailData.html);
     console.log('=====================================\n');
+    
+    // For password reset emails, provide additional console information
+    if (emailData.subject.includes('Password Reset')) {
+      console.log('🔐 PASSWORD RESET EMAIL SENT TO CONSOLE');
+      console.log('📧 Since SendGrid is not working, the password reset link was logged above.');
+      console.log('🔗 You can copy the reset link from the console output above.');
+      console.log('⚠️  In production, ensure SendGrid API key is valid for actual email delivery.');
+    }
+    
     return true;
   }
 
@@ -157,7 +173,7 @@ class EmailService {
 
   async testConnection(): Promise<{ success: boolean; message: string }> {
     try {
-      if (this.config.provider === 'sendgrid' && this.config.apiKey && this.config.apiKey !== 'SG.your-sendgrid-api-key-here') {
+      if (this.config.provider === 'sendgrid' && this.config.apiKey && this.config.apiKey !== 'SG.your-sendgrid-api-key-here' && this.config.apiKey.length > 20) {
         // Test SendGrid connection by sending a test email to a test address
         const testEmail: EmailData = {
           to: 'test@example.com',
@@ -173,6 +189,14 @@ class EmailService {
     } catch (error) {
       return { success: false, message: `Connection failed: ${error}` };
     }
+  }
+
+  // Method to check if SendGrid is properly configured
+  isSendGridAvailable(): boolean {
+    return this.config.provider === 'sendgrid' && 
+           !!this.config.apiKey && 
+           this.config.apiKey !== 'SG.your-sendgrid-api-key-here' && 
+           this.config.apiKey.length > 20;
   }
 }
 

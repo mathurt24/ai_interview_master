@@ -9,6 +9,7 @@ import { emailService } from "./services/email-service";
 import { z } from "zod";
 import { RtcTokenBuilder } from 'agora-access-token';
 import { generateTTS } from "./services/tts";
+import crypto from "crypto";
 
 interface RequestWithFile extends Request {
   file?: Express.Multer.File;
@@ -490,7 +491,7 @@ function generateInvitationToken(candidateId: number, email: string): string {
 // Helper function to send interview invitation email
 async function sendInterviewInvitation(email: string, name: string, jobRole: string, skillset: string, token: string, candidateDetails?: any): Promise<void> {
   try {
-    const invitationLink = `${process.env.FRONTEND_URL || 'http://localhost:5174'}/signup?token=${token}`;
+          const invitationLink = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/signup?token=${token}`;
     
     // Enhanced email template with more candidate details
     const emailHtml = `
@@ -651,20 +652,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Signup endpoint
   app.post("/api/auth/signup", async (req, res) => {
     try {
-      const { email, password, invitationToken } = req.body;
+      const { name, email, password, invitationToken } = req.body;
       const existing = await storage.getUserByEmail(email);
       if (existing) return res.status(400).json({ message: "You already have an account. Please log in instead." });
       const hashed = await bcrypt.hash(password, 10);
       const user = await storage.createUser({ email, password: hashed, role: "candidate" });
       if (invitationToken) {
         const invitation = await storage.getInvitationByToken(invitationToken);
-        if (invitation && invitation.email === email && invitation.candidateInfo) {
+        if (invitation && invitation.email === email) {
+          // Use the name from the form if available, otherwise fall back to invitation data
+          const candidateName = name || (invitation.candidateInfo?.name || 'Unknown');
+          const candidatePhone = invitation.candidateInfo?.phone || 'Not specified';
+          
           await storage.createCandidate({
-            name: invitation.candidateInfo.name,
-            email: invitation.candidateInfo.email,
-            phone: invitation.candidateInfo.phone,
+            name: candidateName,
+            email: email,
+            phone: candidatePhone,
             jobRole: invitation.jobRole,
-            resumeText: invitation.candidateInfo.resumeText,
+            resumeText: invitation.candidateInfo?.resumeText || `Job Role: ${invitation.jobRole}\nRequired Skills: ${invitation.skillset}\nCandidate: ${candidateName} (${email})`,
             invited: true
           });
           await storage.updateInvitationStatus(invitationToken, 'accepted');
@@ -672,6 +677,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       res.json({ id: user.id, email: user.email, role: user.role });
     } catch (error) {
+      console.error('Signup error:', error);
       res.status(400).json({ message: "Invalid signup data" });
     }
   });
@@ -694,7 +700,266 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(400).json({ message: "Invalid login data" });
     }
   });
+
+  // Forgot password endpoint
+  app.post("/api/auth/forgot-password", async (req, res) => {
+    try {
+      const { email } = req.body;
+      if (!email) {
+        return res.status(400).json({ message: "Email is required" });
+      }
+
+      const user = await storage.getUserByEmail(email);
+      if (!user) {
+        // Don't reveal if user exists or not for security
+        return res.json({ message: "If an account with that email exists, a password reset link has been sent." });
+      }
+
+      // Generate reset token (valid for 1 hour)
+      const resetToken = crypto.randomBytes(32).toString('hex');
+      const resetTokenExpiry = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+
+      // Store reset token in database
+      await storage.storePasswordResetToken(email, resetToken, resetTokenExpiry);
+
+      // Send reset email
+      const resetLink = `${req.protocol}://${req.get('host')}/reset-password?token=${resetToken}`;
+      
+      try {
+        const emailSent = await emailService.sendEmail({
+          to: email,
+          subject: "🔐 Password Reset Request - FirstroundAI",
+          html: `
+            <!DOCTYPE html>
+            <html>
+            <head>
+              <meta charset="utf-8">
+              <title>Password Reset</title>
+              <style>
+                body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+                .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+                .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
+                .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }
+                .button { display: inline-block; background: #667eea; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; margin: 20px 0; font-weight: bold; }
+                .footer { text-align: center; margin-top: 30px; color: #666; font-size: 14px; }
+                .warning { background: #fff3cd; border: 1px solid #ffeaa7; color: #856404; padding: 15px; border-radius: 5px; margin: 20px 0; }
+              </style>
+            </head>
+            <body>
+              <div class="container">
+                <div class="header">
+                  <h1>🔐 Password Reset</h1>
+                  <p>You requested a password reset</p>
+                </div>
+                <div class="content">
+                  <h2>Hello,</h2>
+                  <p>We received a request to reset your password for your FirstroundAI account.</p>
+                  
+                  <div style="text-align: center;">
+                    <a href="${resetLink}" class="button">Reset Password</a>
+                  </div>
+                  
+                  <div class="warning">
+                    <strong>⚠️ Important:</strong>
+                    <ul>
+                      <li>This link will expire in 1 hour</li>
+                      <li>If you didn't request this reset, please ignore this email</li>
+                      <li>Your password will remain unchanged until you click the link above</li>
+                    </ul>
+                  </div>
+                  
+                  <p>If the button above doesn't work, copy and paste this link into your browser:</p>
+                  <p style="word-break: break-all; background: #f0f0f0; padding: 10px; border-radius: 5px; font-family: monospace;">${resetLink}</p>
+                  
+                  <p>Best regards,<br>
+                  <strong>AI Interview Team</strong><br>
+                  FirstroundAI</p>
+                </div>
+                <div class="footer">
+                  <p>This is an automated email. Please do not reply to this message.</p>
+                </div>
+              </div>
+            </body>
+            </html>
+          `
+        });
+        
+        if (emailSent) {
+          // Check if we're in console mode and provide additional info
+          if (!emailService.isSendGridAvailable()) {
+            console.log('🔐 PASSWORD RESET: Email sent to console mode');
+            console.log('🔗 Reset link for user:', email);
+            console.log('🔗 Reset link:', resetLink);
+            console.log('⚠️  User should check console output for the reset link');
+          }
+          
+          res.json({ 
+            message: "Password reset email sent successfully",
+            consoleMode: !emailService.isSendGridAvailable(),
+            note: !emailService.isSendGridAvailable() ? "Check server console for reset link" : undefined
+          });
+        } else {
+          throw new Error('Email service failed to send email');
+        }
+      } catch (emailError: any) {
+        console.error("Failed to send password reset email:", emailError);
+        
+        // If it's a SendGrid error, provide specific guidance
+        if (emailError.code === 403) {
+          console.error("❌ SendGrid API key issue detected. Password reset email failed.");
+          console.error("🔗 Reset link for user:", email);
+          console.error("🔗 Reset link:", resetLink);
+          console.error("⚠️  User should check server console for the reset link");
+          
+          res.json({ 
+            message: "Password reset link generated but email delivery failed. Check server console for the reset link.",
+            consoleMode: true,
+            note: "Email service unavailable - check server console for reset link"
+          });
+        } else {
+          // Still return success to avoid revealing if user exists
+          res.json({ 
+            message: "If an account with that email exists, a password reset link has been sent.",
+            consoleMode: true,
+            note: "Email service error - check server console for reset link"
+          });
+        }
+      }
+    } catch (error) {
+      console.error("Forgot password error:", error);
+      res.status(500).json({ message: "Failed to process password reset request" });
+    }
+  });
+
+  // Validate reset token endpoint
+  app.get("/api/auth/validate-reset-token", async (req, res) => {
+    try {
+      const { token } = req.query;
+      if (!token) {
+        return res.status(400).json({ message: "Token is required" });
+      }
+
+      const isValid = await storage.validatePasswordResetToken(token as string);
+      if (isValid) {
+        res.json({ valid: true });
+      } else {
+        res.status(400).json({ message: "Invalid or expired token" });
+      }
+    } catch (error) {
+      console.error("Token validation error:", error);
+      res.status(500).json({ message: "Failed to validate token" });
+    }
+  });
+
+  // Reset password endpoint
+  app.post("/api/auth/reset-password", async (req, res) => {
+    try {
+      const { token, password } = req.body;
+      if (!token || !password) {
+        return res.status(400).json({ message: "Token and password are required" });
+      }
+
+      if (password.length < 6) {
+        return res.status(400).json({ message: "Password must be at least 6 characters long" });
+      }
+
+      // Validate token and get user email
+      const userEmail = await storage.validatePasswordResetToken(token);
+      if (!userEmail) {
+        return res.status(400).json({ message: "Invalid or expired token" });
+      }
+
+      // Hash new password
+      const hashedPassword = await bcrypt.hash(password, 10);
+
+      // Update user password
+      await storage.updateUserPassword(userEmail, hashedPassword);
+
+      // Invalidate used token
+      await storage.invalidatePasswordResetToken(token);
+
+      res.json({ message: "Password reset successfully" });
+    } catch (error) {
+      console.error("Reset password error:", error);
+      res.status(500).json({ message: "Failed to reset password" });
+    }
+  });
   
+  // Start interview for invited candidates (no resume required)
+  app.post("/api/interviews/start-invited", async (req, res) => {
+    try {
+      const { email } = req.body;
+      if (!email) {
+        return res.status(400).json({ message: "Email is required" });
+      }
+
+      // Check if candidate exists and is invited
+      const candidatesWithEmail = await storage.findCandidatesByEmail(email);
+      if (!candidatesWithEmail || candidatesWithEmail.length === 0) {
+        return res.status(404).json({ message: "Candidate not found. Please contact your administrator." });
+      }
+
+      const candidate = candidatesWithEmail[0];
+      if (candidate.disqualified) {
+        return res.status(403).json({ message: "Interview cancelled due to disciplinary action." });
+      }
+
+      // Check if candidate already has a completed interview
+      const interviews = await storage.getInterviewsByCandidate(candidate.id);
+      if (interviews.some(i => i.status === 'completed')) {
+        return res.status(403).json({ message: "You have already completed your interview. Only one interview is allowed per user." });
+      }
+
+      // Check if there's an active interview
+      const activeInterview = interviews.find(i => i.status === 'in-progress');
+      if (activeInterview) {
+        // Return existing active interview
+        const questionSet = activeInterview.questions as { questions: string[] };
+        return res.json({
+          interviewId: activeInterview.id,
+          candidateId: candidate.id,
+          questions: questionSet.questions,
+          currentQuestion: questionSet.questions[0],
+          candidateName: candidate.name,
+          candidateRole: candidate.jobRole,
+          candidatePhone: candidate.phone
+        });
+      }
+
+      // Get global AI provider
+      const rawProvider = await storage.getSetting("ai_provider");
+      console.log('DB value for ai_provider (invited):', rawProvider);
+      
+      // Force use Gemini for interview questions while keeping OpenAI for resume extraction
+      const provider = "gemini" as 'openai' | 'gemini';
+      console.log('Forced provider for invited interview questions:', provider);
+
+      // Generate interview questions using candidate's existing resume text
+      const questionSet = await generateInterviewQuestions(candidate.name, candidate.jobRole, candidate.resumeText, provider);
+
+      // Create new interview
+      const interview = await storage.createInterview({
+        candidateId: candidate.id,
+        questions: questionSet,
+        currentQuestionIndex: 0,
+        status: "in-progress"
+      });
+
+      res.json({
+        interviewId: interview.id,
+        candidateId: candidate.id,
+        questions: questionSet.questions,
+        currentQuestion: questionSet.questions[0],
+        candidateName: candidate.name,
+        candidateRole: candidate.jobRole,
+        candidatePhone: candidate.phone
+      });
+    } catch (error) {
+      console.error("Error starting invited interview:", error);
+      res.status(500).json({ message: "Failed to start interview" });
+    }
+  });
+
   // Start interview with resume upload
   app.post("/api/interviews/start", upload.single('resume'), async (req: RequestWithFile, res) => {
     try {
@@ -741,7 +1006,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Get global AI provider
       const rawProvider = await storage.getSetting("ai_provider");
       console.log('DB value for ai_provider:', rawProvider);
-      const provider = (rawProvider || "openai") as 'openai' | 'gemini';
+      console.log('Storage instance:', storage.constructor.name);
+      console.log('Database URL:', process.env.DATABASE_URL?.substring(0, 20) + '...');
+      
+      // Force use Gemini for interview questions while keeping OpenAI for resume extraction
+      const provider = "gemini" as 'openai' | 'gemini';
+      console.log('Forced provider for interview questions:', provider);
       // Generate interview questions
       const questionSet = await generateInterviewQuestions(name, jobRole, candidate.resumeText, provider);
       // Create interview
@@ -755,7 +1025,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         interviewId: interview.id,
         candidateId: candidate.id,
         questions: questionSet.questions,
-        currentQuestion: questionSet.questions[0]
+        currentQuestion: questionSet.questions[0],
+        candidateName: candidate.name,
+        candidateRole: candidate.jobRole,
+        candidatePhone: candidate.phone
       });
     } catch (error) {
       console.error("Error starting interview:", error);
@@ -1332,6 +1605,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Test endpoint to check environment variables
+  app.get("/api/test-env", (req, res) => {
+    res.json({
+      message: "Environment variables test",
+      OPENAI_API_KEY: process.env.OPENAI_API_KEY ? `Found (${process.env.OPENAI_API_KEY.substring(0, 10)}...)` : "Not found",
+      OPENAI_API_KEY_LENGTH: process.env.OPENAI_API_KEY ? process.env.OPENAI_API_KEY.length : 0,
+      OPENAI_API_KEY_STARTS_WITH_SK: process.env.OPENAI_API_KEY ? process.env.OPENAI_API_KEY.startsWith('sk-') : false,
+      GEMINI_API_KEY: process.env.GEMINI_API_KEY ? `Found (${process.env.GEMINI_API_KEY.substring(0, 10)}...)` : "Not found",
+      NODE_ENV: process.env.NODE_ENV,
+      CURRENT_WORKING_DIR: process.cwd()
+    });
+  });
+
+  // Health check endpoint
+  app.get("/api/health", (req, res) => {
+    res.json({ status: "OK" });
+  });
+
   // Admin: Get system health status
   app.get("/api/admin/health", async (_req, res) => {
     try {
@@ -1413,6 +1704,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { candidateInfo, jobRole, skillset } = req.body;
       
+      // Debug: Log the exact request data received
+      console.log('=== INVITATION REQUEST DEBUG ===');
+      console.log('Request body received:', JSON.stringify(req.body, null, 2));
+      console.log('Candidate info:', candidateInfo);
+      console.log('Job role:', jobRole);
+      console.log('Skillset:', skillset);
+      console.log('================================');
+      
       // Validate required fields
       if (!candidateInfo || !candidateInfo.email || !jobRole) {
         return res.status(400).json({ 
@@ -1428,32 +1727,63 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Find the existing candidate by email
       const candidatesWithEmail = await storage.findCandidatesByEmail(candidateInfo.email);
       let candidateId = null;
+      let resumeText = candidateInfo.resumeText || `Job Role: ${jobRole}\nRequired Skills: ${skillset || 'Not specified'}\nCandidate: ${candidateInfo.name || 'Not specified'} (${candidateInfo.email})`;
       
       if (candidatesWithEmail && candidatesWithEmail.length > 0) {
+        // Update existing candidate with new information
         candidateId = candidatesWithEmail[0].id;
+        const updatedResumeText = candidateInfo.resumeText || candidatesWithEmail[0].resumeText;
+        
+        await storage.updateCandidate(candidateId, {
+          name: candidateInfo.name || candidatesWithEmail[0].name,
+          phone: candidateInfo.phone || candidatesWithEmail[0].phone,
+          jobRole: jobRole,
+          resumeText: updatedResumeText,
+          invited: true
+        });
+      } else {
+        // Create new candidate record immediately
+        const newCandidate = await storage.createCandidate({
+          name: candidateInfo.name || 'Not specified',
+          email: candidateInfo.email,
+          phone: candidateInfo.phone || 'Not specified',
+          jobRole: jobRole,
+          resumeText: resumeText,
+          invited: true
+        });
+        candidateId = newCandidate.id;
+        console.log(`✅ Created new candidate with ID: ${candidateId}`);
       }
       
-      // Generate invitation token using candidate ID or timestamp as fallback
-      const invitationToken = generateInvitationToken(candidateId || Date.now(), candidateInfo.email);
+      // Generate invitation token using candidate ID
+      const invitationToken = generateInvitationToken(candidateId, candidateInfo.email);
       
       // Store invitation with candidate info
       const invitation = await storage.createInvitation({
         candidateId,
         email: candidateInfo.email,
         token: invitationToken,
-        jobRole,
+        jobRole: jobRole, // Use 'jobRole' as defined in the schema
         skillset: skillset || 'Not specified',
         status: 'pending',
         candidateInfo: {
           name: candidateInfo.name || 'Not specified',
           email: candidateInfo.email,
           phone: candidateInfo.phone || 'Not specified',
-          resumeText: `Job Role: ${jobRole}\nRequired Skills: ${skillset || 'Not specified'}\nCandidate: ${candidateInfo.name || 'Not specified'} (${candidateInfo.email})`
+          resumeText: resumeText
         }
       });
       
+      console.log(`✅ Created invitation for candidate ${candidateId}: ${invitationToken}`);
+      
       await sendInterviewInvitation(candidateInfo.email, candidateInfo.name || 'Not specified', jobRole, skillset || 'Not specified', invitationToken, candidateInfo);
-      res.json({ success: true, message: `Invitation sent to ${candidateInfo.email}`, invitationId: invitation.id, token: invitationToken });
+      res.json({ 
+        success: true, 
+        message: `Invitation sent to ${candidateInfo.email}`, 
+        invitationId: invitation.id, 
+        token: invitationToken,
+        candidateId: candidateId
+      });
     } catch (error) {
       console.error("Error sending interview invite:", error);
       res.status(500).json({ message: "Failed to send interview invitation" });

@@ -8,6 +8,17 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [successMessage, setSuccessMessage] = useState('');
+  
+  // Check for success message from signup
+  React.useEffect(() => {
+    // Check if there's a success message in localStorage from signup
+    const signupMessage = localStorage.getItem('signupMessage');
+    if (signupMessage) {
+      setSuccessMessage(signupMessage);
+      localStorage.removeItem('signupMessage'); // Clear the message
+    }
+  }, []);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -27,6 +38,27 @@ export default function Login() {
         if (data.role === 'admin') {
           setLocation('/admin');
         } else {
+          // Check if there's a pending interview for this candidate
+          const pendingInterview = localStorage.getItem('pendingInterview');
+          if (pendingInterview) {
+            try {
+              const interviewData = JSON.parse(pendingInterview);
+              // Clear the pending interview data
+              localStorage.removeItem('pendingInterview');
+              // Redirect to interview consent page
+              setLocation('/interview-consent', {
+                state: {
+                  interviewToken: interviewData.token,
+                  candidateName: data.name || email,
+                  jobRole: interviewData.jobRole
+                }
+              });
+              return;
+            } catch (e) {
+              console.error('Error parsing pending interview data:', e);
+            }
+          }
+          
           // Fetch candidate record to check if invited
           fetch(`/api/admin/candidates`)
             .then(res => res.json())
@@ -56,6 +88,11 @@ export default function Login() {
           <span className="font-extrabold text-xl tracking-tight text-transparent bg-clip-text bg-gradient-to-br from-blue-600 to-purple-500 mt-2">FirstroundAI</span>
         </div>
         <h2 className="text-2xl font-bold mb-6 text-center">Login</h2>
+        {successMessage && (
+          <div className="mb-4 p-4 bg-green-50 border border-green-200 rounded-lg text-center text-green-700">
+            {successMessage}
+          </div>
+        )}
         {error && <div className="mb-4 text-red-600 text-center">{error}</div>}
         <div className="mb-4">
           <label className="block mb-1 text-sm font-medium">Email</label>
@@ -76,6 +113,11 @@ export default function Login() {
             onChange={e => setPassword(e.target.value)}
             required
           />
+          <div className="mt-2 text-right">
+            <a href="/forgot-password" className="text-sm text-blue-600 hover:underline">
+              Forgot Password?
+            </a>
+          </div>
         </div>
         <button
           type="submit"

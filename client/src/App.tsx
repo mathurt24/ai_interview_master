@@ -5,15 +5,19 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { Brain, Mic, BarChart3, Settings, Bell } from 'lucide-react';
 import InterviewUpload from "@/pages/interview-upload";
 import InterviewSession from "@/pages/interview-session";
+import InterviewConsent from "@/pages/interview-consent";
 import AdminDashboard from "@/pages/admin-dashboard";
 import AdminResumeUpload from "@/pages/admin-resume-upload";
 import AdminEmailConfig from "@/pages/admin-email-config";
 import NotFound from "@/pages/not-found";
 import SignupPage from "@/pages/signup";
 import LoginPage from "@/pages/login";
+import ForgotPassword from "@/pages/forgot-password";
+import ResetPassword from "@/pages/reset-password";
 import React, { useEffect } from "react";
 import AdminInterviewResults from "@/pages/admin-interview-results";
 import Signup from './pages/signup';
+import InterviewTerminated from "@/pages/interview-terminated";
 import { Logo } from '@/components/Logo';
 
 // Protected route component for upload page
@@ -24,6 +28,13 @@ function ProtectedUploadRoute() {
   const user = typeof window !== 'undefined' ? JSON.parse(localStorage.getItem('user') || 'null') : null;
 
   React.useEffect(() => {
+    // Admin users should always have access to upload page
+    if (user?.role === 'admin') {
+      setIsLoading(false);
+      return;
+    }
+
+    // Only check invitation status for candidates
     if (user?.role === 'candidate' && user?.email) {
       fetch('/api/admin/candidates')
         .then(res => res.json())
@@ -33,11 +44,9 @@ function ProtectedUploadRoute() {
           setIsInvitedCandidate(isInvited);
           setIsLoading(false);
           
-          // Redirect invited candidates to interview immediately
+          // If candidate is invited, redirect to interview
           if (isInvited) {
-            console.log('Redirecting invited candidate to interview');
             setLocation('/interview');
-            return;
           }
         })
         .catch(() => {
@@ -48,26 +57,27 @@ function ProtectedUploadRoute() {
     }
   }, [user, setLocation]);
 
-  // Separate useEffect for redirect after state is set
-  React.useEffect(() => {
-    if (isInvitedCandidate && !isLoading) {
-      console.log('Candidate is invited, redirecting to interview');
-      setLocation('/interview');
-    }
-  }, [isInvitedCandidate, isLoading, setLocation]);
-
-  // If we're still loading, show loading screen
   if (isLoading) {
     return <div className="flex items-center justify-center min-h-screen">Loading...</div>;
   }
 
-  // If candidate is invited, show redirect message
-  if (isInvitedCandidate) {
+  // Admin users can always access upload page
+  if (user?.role === 'admin') {
+    return <InterviewUpload />;
+  }
+
+  // Non-invited candidates can access upload page
+  if (user?.role === 'candidate' && !isInvitedCandidate) {
+    return <InterviewUpload />;
+  }
+
+  // Invited candidates should be redirected to interview
+  if (user?.role === 'candidate' && isInvitedCandidate) {
     return <div className="flex items-center justify-center min-h-screen">Redirecting to interview...</div>;
   }
 
-  // Show upload page for non-invited candidates
-  return <InterviewUpload />;
+  // Fallback
+  return <div className="flex items-center justify-center min-h-screen">Access denied</div>;
 }
 
 const queryClient = new QueryClient();
@@ -79,19 +89,24 @@ function LandingRedirect() {
     if (user) {
       if (user.role === 'admin') {
         setLocation('/admin');
-      } else {
+      } else if (user.role === 'candidate') {
         // Check if candidate is invited
         fetch('/api/admin/candidates')
           .then(res => res.json())
           .then(candidates => {
             const candidate = candidates.find((c: any) => c.email === user.email);
             if (candidate?.invited) {
+              // Invited candidates go directly to interview
               setLocation('/interview');
             } else {
+              // Self-registered candidates go to upload page
               setLocation('/upload');
             }
           })
-          .catch(() => setLocation('/upload')); // Fallback
+          .catch(() => {
+            // Fallback for candidates - go to upload page
+            setLocation('/upload');
+          });
       }
     }
     // else, stay on login page
@@ -102,16 +117,20 @@ function LandingRedirect() {
 function Router() {
   return (
     <Switch>
-      <Route path="/" component={LandingRedirect} />
-      <Route path="/interview" component={InterviewSession} />
-      <Route path="/upload" component={ProtectedUploadRoute} />
-      <Route path="/admin" component={AdminDashboard} />
-      <Route path="/admin/upload-resume" component={AdminResumeUpload} />
-      <Route path="/admin/email-config" component={AdminEmailConfig} />
-      <Route path="/signup" component={SignupPage} />
-      <Route path="/login" component={LoginPage} />
-      <Route path="/admin/interview/:id" component={AdminInterviewResults} />
-      <Route component={NotFound} />
+              <Route path="/" component={LandingRedirect} />
+        <Route path="/interview-consent" component={InterviewConsent} />
+        <Route path="/interview" component={InterviewSession} />
+        <Route path="/upload" component={ProtectedUploadRoute} />
+        <Route path="/admin" component={AdminDashboard} />
+        <Route path="/admin/upload-resume" component={AdminResumeUpload} />
+        <Route path="/admin/email-config" component={AdminEmailConfig} />
+        <Route path="/signup" component={SignupPage} />
+        <Route path="/login" component={LoginPage} />
+        <Route path="/admin/interview/:id" component={AdminInterviewResults} />
+        <Route path="/forgot-password" component={ForgotPassword} />
+        <Route path="/reset-password/:token" component={ResetPassword} />
+        <Route path="/interview-terminated" component={InterviewTerminated} />
+        <Route component={NotFound} />
     </Switch>
   );
 }
@@ -169,7 +188,9 @@ function Navigation() {
           </div>
           <nav className="hidden md:flex space-x-8">
             <a href="/" className="text-primary pb-4 font-medium flex items-center">Home</a>
-            <a href="/interview" className="text-gray-500 hover:text-gray-700 pb-4 font-medium flex items-center">Interview</a>
+            {user && user.role === 'candidate' && (
+              <a href="/interview" className="text-gray-500 hover:text-gray-700 pb-4 font-medium flex items-center">Interview</a>
+            )}
             {user && user.role === 'admin' && (
               <a href="/admin" className="text-gray-500 hover:text-gray-700 pb-4 font-medium flex items-center">Admin Console</a>
             )}
@@ -241,7 +262,7 @@ function SidebarLayout({ children }: { children: React.ReactNode }) {
       ]
     : isInvitedCandidate
     ? [
-        // Invited candidates only see Interview
+        // Invited candidates only see Interview - no other options
         { label: 'Interview', path: '/interview' },
       ]
     : [
@@ -249,6 +270,14 @@ function SidebarLayout({ children }: { children: React.ReactNode }) {
         { label: 'Upload Resume', path: '/upload' },
         { label: 'Interview', path: '/interview' },
       ];
+
+  // For invited candidates, force redirect to interview if they try to access other routes
+  React.useEffect(() => {
+    if (isInvitedCandidate && location !== '/interview') {
+      setLocation('/interview');
+    }
+  }, [isInvitedCandidate, location, setLocation]);
+
   return (
     <div className="flex min-h-screen">
       <aside className="w-56 bg-white dark:bg-gray-800 shadow-lg flex-shrink-0 flex flex-col">
@@ -288,7 +317,32 @@ function SidebarLayout({ children }: { children: React.ReactNode }) {
 
 export default function App() {
   const [location] = useLocation();
+  const [isLoading, setIsLoading] = React.useState(true);
+  const [invitationStatus, setInvitationStatus] = React.useState<boolean | null>(null);
   const user = typeof window !== 'undefined' ? JSON.parse(localStorage.getItem('user') || 'null') : null;
+  
+  // Check invitation status on component mount
+  React.useEffect(() => {
+    const checkInvitationStatus = async () => {
+      if (user?.role === 'candidate' && user?.email) {
+        try {
+          const response = await fetch('/api/admin/candidates');
+          const candidates = await response.json();
+          const candidate = candidates.find((c: any) => c.email === user.email);
+          setInvitationStatus(candidate?.invited || false);
+        } catch (error) {
+          console.error('Error checking invitation status:', error);
+          setInvitationStatus(false);
+        }
+      } else {
+        setInvitationStatus(false);
+      }
+      setIsLoading(false);
+    };
+    
+    checkInvitationStatus();
+  }, [user]);
+  
   if (location === '/login') {
     return (
       <QueryClientProvider client={queryClient}>
@@ -296,6 +350,7 @@ export default function App() {
       </QueryClientProvider>
     );
   }
+  
   if (location === '/signup') {
     return (
       <QueryClientProvider client={queryClient}>
@@ -303,10 +358,66 @@ export default function App() {
       </QueryClientProvider>
     );
   }
+  
+  if (location === '/forgot-password') {
+    return (
+      <QueryClientProvider client={queryClient}>
+        <ForgotPassword />
+      </QueryClientProvider>
+    );
+  }
+  
+  if (location.startsWith('/reset-password')) {
+    return (
+      <QueryClientProvider client={queryClient}>
+        <ResetPassword />
+      </QueryClientProvider>
+    );
+  }
+  
   if (!user) {
     window.location.href = '/login';
     return null;
   }
+
+  // Show loading while checking invitation status
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Role-based route protection
+  const isAdmin = user.role === 'admin';
+  const isCandidate = user.role === 'candidate';
+
+  // Admin users can only access admin routes
+  if (isAdmin) {
+    if (!location.startsWith('/admin')) {
+      // Redirect admin users to admin dashboard if they try to access non-admin routes
+      window.location.href = '/admin';
+      return null;
+    }
+  }
+
+  // Candidates cannot access admin routes - immediate redirect
+  if (isCandidate && location.startsWith('/admin')) {
+    // Redirect candidates away from admin routes immediately
+    window.location.href = '/interview';
+    return null;
+  }
+
+  // For invited candidates, force redirect to interview if they're not already there
+  if (isCandidate && invitationStatus === true && location !== '/interview') {
+    window.location.href = '/interview';
+    return null;
+  }
+
   return (
     <QueryClientProvider client={queryClient}>
       <SidebarLayout>
@@ -314,11 +425,15 @@ export default function App() {
           {/* Candidate routes */}
           <Route path="/upload" component={ProtectedUploadRoute} />
           <Route path="/interview" component={InterviewSession} />
-          {/* Admin routes */}
-          <Route path="/admin" component={AdminDashboard} />
-          <Route path="/admin/upload-resume" component={AdminResumeUpload} />
-          <Route path="/admin/email-config" component={AdminEmailConfig} />
-          <Route path="/admin/interview/:id" component={AdminInterviewResults} />
+          {/* Admin routes - only accessible by admin users */}
+          {isAdmin && (
+            <>
+              <Route path="/admin" component={AdminDashboard} />
+              <Route path="/admin/upload-resume" component={AdminResumeUpload} />
+              <Route path="/admin/email-config" component={AdminEmailConfig} />
+              <Route path="/admin/interview/:id" component={AdminInterviewResults} />
+            </>
+          )}
           {/* Fallback */}
           <Route component={NotFound} />
         </Switch>

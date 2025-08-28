@@ -65,6 +65,13 @@ export interface IStorage {
   getUserByEmail(email: string): Promise<User | undefined>;
   findCandidatesByEmail(email: string): Promise<any[]>;
   getAllUsers(): Promise<User[]>;
+  
+  // Password reset operations
+  storePasswordResetToken(email: string, token: string, expiry: Date): Promise<void>;
+  validatePasswordResetToken(token: string): Promise<string | null>; // Returns email if valid
+  updateUserPassword(email: string, hashedPassword: string): Promise<void>;
+  invalidatePasswordResetToken(token: string): Promise<void>;
+  
   // Settings operations
   getSetting(key: string): Promise<string | undefined>;
   setSetting(key: string, value: string): Promise<void>;
@@ -267,6 +274,28 @@ export class MemStorage implements IStorage {
   }
   async getAllUsers(): Promise<User[]> {
     return Array.from(this.users.values());
+  }
+  async storePasswordResetToken(email: string, token: string, expiry: Date): Promise<void> {
+    // In memory storage, we'll just store the token and its expiry
+    // In a real DB, you'd have a table for password reset tokens
+    this.users.set(`reset_token_${token}`, { email, expiry });
+  }
+  async validatePasswordResetToken(token: string): Promise<string | null> {
+    const resetTokenEntry = this.users.get(`reset_token_${token}`);
+    if (resetTokenEntry && resetTokenEntry.expiry > new Date()) {
+      return resetTokenEntry.email;
+    }
+    return null;
+  }
+  async updateUserPassword(email: string, hashedPassword: string): Promise<void> {
+    const user = Array.from(this.users.values()).find(u => u.email === email);
+    if (user) {
+      user.password = hashedPassword;
+      this.users.set(email, user);
+    }
+  }
+  async invalidatePasswordResetToken(token: string): Promise<void> {
+    this.users.delete(`reset_token_${token}`);
   }
   async getSetting(key: string): Promise<string | undefined> {
     return this.settings.get(key);

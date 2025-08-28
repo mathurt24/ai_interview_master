@@ -89,13 +89,13 @@ export const tokenUsage = pgTable("token_usage", {
 
 export const invitations = pgTable("invitations", {
   id: serial("id").primaryKey(),
-  candidateId: integer("candidate_id").references(() => candidates.id),
+  candidateId: integer("candidateid").references(() => candidates.id), // Fixed: use 'candidateid' to match actual DB column
   email: text("email").notNull(),
   token: text("token").notNull().unique(),
-  jobRole: text("job_role").notNull(),
+  jobRole: text("jobrole").notNull(), // Fixed: use 'jobrole' to match actual DB column
   skillset: text("skillset").notNull(),
   status: text("status").default("pending").notNull(),
-  candidateInfo: jsonb("candidate_info"),
+  candidateInfo: jsonb("candidateinfo"), // Fixed: use 'candidateinfo' to match actual DB column
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });

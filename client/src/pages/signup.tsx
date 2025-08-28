@@ -100,11 +100,23 @@ export default function Signup() {
       if (!res.ok) {
         setError(data.message || 'Signup failed');
       } else {
+        // Store user data in localStorage for immediate access
+        const userData = { id: data.id, email: data.email, role: data.role };
+        localStorage.setItem('user', JSON.stringify(userData));
+        
+        // Store invitation details in localStorage for after login
         if (invitationToken) {
-          setLocation('/interview');
-        } else {
-          setLocation('/login');
+          localStorage.setItem('pendingInterview', JSON.stringify({
+            token: invitationToken,
+            jobRole: invitationData?.jobRole
+          }));
         }
+        
+        // Store success message in localStorage
+        localStorage.setItem('signupMessage', 'Account created successfully! Please login to continue.');
+        
+        // Always redirect to login page after successful signup
+        setLocation('/login');
       }
     } catch (err) {
       setError('Signup failed');

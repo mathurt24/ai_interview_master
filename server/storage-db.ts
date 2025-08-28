@@ -35,6 +35,8 @@ type TokenUsageRow = {
 };
 
 export class DatabaseStorage implements IStorage {
+  private passwordResetTokens: Map<string, { email: string; expiry: Date }> | null = null;
+
   async createCandidate(candidate: InsertCandidate): Promise<Candidate> {
     const [result] = await db.insert(candidates).values(candidate).returning();
     return result;
@@ -330,5 +332,44 @@ export class DatabaseStorage implements IStorage {
 
   async deleteUserByEmail(email: string): Promise<void> {
     await db.delete(users).where(eq(users.email, email));
+  }
+
+  // Password reset operations
+  async storePasswordResetToken(email: string, token: string, expiry: Date): Promise<void> {
+    // For now, we'll store this in memory since we don't have a dedicated table
+    // In production, you should create a password_reset_tokens table
+    if (!this.passwordResetTokens) {
+      this.passwordResetTokens = new Map();
+    }
+    this.passwordResetTokens.set(token, { email, expiry });
+  }
+
+  async validatePasswordResetToken(token: string): Promise<string | null> {
+    if (!this.passwordResetTokens) {
+      return null;
+    }
+    
+    const tokenData = this.passwordResetTokens.get(token);
+    if (!tokenData) {
+      return null;
+    }
+    
+    // Check if token is expired
+    if (new Date() > tokenData.expiry) {
+      this.passwordResetTokens.delete(token);
+      return null;
+    }
+    
+    return tokenData.email;
+  }
+
+  async updateUserPassword(email: string, hashedPassword: string): Promise<void> {
+    await db.update(users).set({ password: hashedPassword }).where(eq(users.email, email));
+  }
+
+  async invalidatePasswordResetToken(token: string): Promise<void> {
+    if (this.passwordResetTokens) {
+      this.passwordResetTokens.delete(token);
+    }
   }
 }

@@ -1,0 +1,17 @@
+ABHISHEK ANAND
+Software Developer
+abhishek.2007anand@gmail.com
++91-9876543210
+
+PROFESSIONAL SUMMARY
+Experienced software developer with expertise in modern web technologies including React, Node.js, TypeScript, and cloud platforms. Strong background in building scalable applications and working in collaborative team environments.
+
+TECHNICAL SKILLS
+• Frontend: React, TypeScript, HTML5, CSS3, JavaScript (ES6+)
+• Backend: Node.js, Express.js, RESTful APIs, GraphQL
+• Databases: PostgreSQL, MongoDB, Redis
+• Cloud: AWS, Docker, Kubernetes
+
+EXPERIENCE
+• Software Developer at Tech Company Inc (2022-2024)
+• Junior Developer at StartupTech LLC (2020-2022)

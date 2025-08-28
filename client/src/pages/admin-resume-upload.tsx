@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useLocation } from 'wouter';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -85,7 +85,10 @@ export default function AdminResumeUpload() {
         setInviteEmail(''); // Clear any previous value
       }
       
-      // Auto-populate skillset from resume if available
+      // Auto-populate job role and skillset from resume if available
+      if (data.designation && data.designation !== 'Not specified') {
+        setJobRole(data.designation);
+      }
       if (data.skillset && data.skillset.length > 0) {
         setSkillset(data.skillset.join(', '));
       }
@@ -190,6 +193,9 @@ export default function AdminResumeUpload() {
         <Card>
           <CardHeader>
             <CardTitle>Upload Resume</CardTitle>
+            <CardDescription>
+              Upload a candidate's resume to automatically extract information and populate the job role and skillset fields.
+            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div>
@@ -207,8 +213,13 @@ export default function AdminResumeUpload() {
                 id="jobRole"
                 value={jobRole}
                 onChange={(e) => setJobRole(e.target.value)}
-                placeholder="e.g., Software Engineer, QA Manager"
+                placeholder="e.g., Software Engineer, QA Manager (will be auto-populated from resume)"
               />
+              {extractedInfo?.designation && extractedInfo.designation !== 'Not specified' && (
+                <p className="text-xs text-gray-500 mt-1">
+                  💡 Job role auto-populated from resume. You can modify as needed.
+                </p>
+              )}
             </div>
 
             <div>
@@ -384,6 +395,18 @@ export default function AdminResumeUpload() {
                 <li>• Required skills: <strong>{skillset}</strong></li>
                 <li>• Instructions to sign up and start the interview</li>
               </ul>
+              
+              {extractedInfo && (
+                <div className="mt-3 pt-3 border-t border-gray-200">
+                  <h5 className="font-medium text-sm mb-2">Candidate's Resume Information:</h5>
+                  <div className="text-xs text-gray-600 space-y-1">
+                    <p><strong>Name:</strong> {extractedInfo.name}</p>
+                    <p><strong>Current Role:</strong> {extractedInfo.designation || 'Not specified'}</p>
+                    <p><strong>Skills from Resume:</strong> {extractedInfo.skillset && extractedInfo.skillset.length > 0 ? extractedInfo.skillset.join(', ') : 'Not specified'}</p>
+                    <p><strong>Experience:</strong> {extractedInfo.pastCompanies && extractedInfo.pastCompanies.length > 0 ? extractedInfo.pastCompanies.join(', ') : 'Not specified'}</p>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
           <DialogFooter>

@@ -8,15 +8,67 @@ import { questionBank } from "@shared/schema";
 import { eq } from "drizzle-orm";
 import { storage } from "../storage";
 
+// Function to get OpenAI API key dynamically
+function getOpenAIKey(): string | undefined {
+  let key = process.env.OPENAI_API_KEY;
+  
+  // Fallback: try to read from .env file directly if not loaded
+  if (!key) {
+    try {
+      const envPaths = [
+        path.resolve(process.cwd(), '.env'),
+        path.resolve(process.cwd(), '..', '.env')
+      ];
+      
+      for (const envPath of envPaths) {
+        try {
+          const envContent = fs.readFileSync(envPath, 'utf-8');
+          const match = envContent.match(/^OPENAI_API_KEY=(.*)$/m);
+          if (match) {
+            key = match[1].trim();
+            console.log(`✅ OpenAI API key loaded from .env file: ${envPath}`);
+            break;
+          }
+        } catch (e) {
+          // Continue to next path
+        }
+      }
+    } catch (e) {
+      console.log('❌ Failed to read .env file for OpenAI key');
+    }
+  }
+  
+  return key;
+}
+
+// Function to get a fresh OpenAI client with current API key
+function getOpenAIClient(): OpenAI {
+  const apiKey = getOpenAIKey();
+  if (!apiKey || !apiKey.startsWith('sk-') || apiKey.length <= 20) {
+    throw new Error('Invalid OpenAI API key');
+  }
+  return new OpenAI({ apiKey });
+}
+
 // the newest OpenAI model is "gpt-4o" which was released May 13, 2024. do not change this unless explicitly requested by the user
-const openai = new OpenAI({ 
-  apiKey: process.env.OPENAI_API_KEY || "sk-mock-key" 
+let openai = new OpenAI({ 
+  apiKey: getOpenAIKey() || "sk-mock-key" 
 });
 
-// Check if we have a valid OpenAI API key
-const hasValidOpenAIKey = process.env.OPENAI_API_KEY && 
-  process.env.OPENAI_API_KEY.startsWith('sk-') && 
-  process.env.OPENAI_API_KEY.length > 20;
+// Function to check if we have a valid OpenAI API key (dynamic check)
+function hasValidOpenAIKey(): boolean {
+  const key = getOpenAIKey();
+  const isValid = Boolean(key && key.startsWith('sk-') && key.length > 20);
+  
+  // Debug logging for OpenAI key
+  console.log('OpenAI API Key check (dynamic):');
+  console.log('OPENAI_API_KEY exists:', !!key);
+  console.log('OPENAI_API_KEY starts with sk-:', key?.startsWith('sk-'));
+  console.log('OPENAI_API_KEY length:', key?.length);
+  console.log('hasValidOpenAIKey:', isValid);
+  
+  return isValid;
+}
 
 // Gemini evaluation
 async function geminiEvaluateAnswer(question: string, answer: string, jobRole: string): Promise<AnswerEvaluation> {
@@ -171,6 +223,13 @@ export async function generateInterviewQuestions(
     return { questions: bankQuestions };
   }
   console.log('Provider for question generation:', provider);
+  
+  // If provider is OpenAI but OpenAI is not available, automatically try Gemini
+  if (provider === 'openai' && !hasValidOpenAIKey()) {
+    console.log("OpenAI not available, automatically trying Gemini instead");
+    provider = 'gemini';
+  }
+  
   if (provider === 'gemini') {
     try {
       return await geminiGenerateQuestions(candidateName, jobRole, resumeText);
@@ -180,13 +239,10 @@ export async function generateInterviewQuestions(
       return generateMockQuestions(candidateName, jobRole, resumeText);
     }
   }
-  // Use mock AI if OpenAI is not available
-  if (!hasValidOpenAIKey) {
-    console.log("Using mock AI for question generation (OpenAI not available)");
-    return generateMockQuestions(candidateName, jobRole, resumeText);
-  }
-
-  const prompt = `You are Tushar, a professional AI interviewer. Analyze the candidate's resume and generate exactly 5 interview questions.
+  
+  // Use OpenAI if available
+  if (hasValidOpenAIKey()) {
+    const prompt = `You are Tushar, a professional AI interviewer. Analyze the candidate's resume and generate exactly 5 interview questions.
 
 Candidate Name: ${candidateName}
 Job Role: ${jobRole}
@@ -210,7 +266,10 @@ Respond with JSON in this format:
 }`;
 
   try {
-    const response = await openai.chat.completions.create({
+    // Get fresh OpenAI client with current API key
+    const openaiClient = getOpenAIClient();
+    
+    const response = await openaiClient.chat.completions.create({
       model: "gpt-4o",
       messages: [
         {
@@ -239,6 +298,11 @@ Respond with JSON in this format:
     console.log("Falling back to mock AI due to OpenAI error");
     return generateMockQuestions(candidateName, jobRole, resumeText);
   }
+  }
+  
+  // Final fallback to mock AI if neither OpenAI nor Gemini worked
+  console.log("Using mock AI for question generation (no AI providers available)");
+  return generateMockQuestions(candidateName, jobRole, resumeText);
 }
 
 export async function evaluateAnswer(
@@ -251,7 +315,7 @@ export async function evaluateAnswer(
     return geminiEvaluateAnswer(question, answer, jobRole);
   }
   // Use mock AI if OpenAI is not available
-  if (!hasValidOpenAIKey) {
+  if (!hasValidOpenAIKey()) {
     console.log("Using mock AI for answer evaluation (OpenAI not available)");
     return evaluateMockAnswer(question, answer, jobRole);
   }
@@ -259,7 +323,10 @@ export async function evaluateAnswer(
   const prompt = `You are Tushar, evaluating a candidate's interview answer. \n\nJob Role: ${jobRole}\nQuestion: ${question}\nAnswer: ${answer}\n\nEvaluate this answer considering:\n- Clarity and correctness\n- Technical depth (if applicable)  \n- Communication skills\n- Domain expertise\n\nProvide a score from 0-10 and 1-2 lines of constructive feedback.\n\nRespond with JSON:\n{\n  "score": 8,\n  "feedback": "Good explanation, but consider mentioning specific examples."\n}`;
 
   try {
-    const response = await openai.chat.completions.create({
+    // Get fresh OpenAI client with current API key
+    const openaiClient = getOpenAIClient();
+    
+    const response = await openaiClient.chat.completions.create({
       model: "gpt-4o",
       messages: [
         {
@@ -299,7 +366,7 @@ export async function generateFinalSummary(
   answers: Array<{ question: string; answer: string; score: number; feedback: string }>
 ): Promise<InterviewSummary> {
   // Use mock AI if OpenAI is not available
-  if (!hasValidOpenAIKey) {
+  if (!hasValidOpenAIKey()) {
     console.log("Using mock AI for final summary (OpenAI not available)");
     return generateMockSummary(candidateName, jobRole, answers);
   }
@@ -328,7 +395,10 @@ Respond with JSON:
 }`;
 
   try {
-    const response = await openai.chat.completions.create({
+    // Get fresh OpenAI client with current API key
+    const openaiClient = getOpenAIClient();
+    
+    const response = await openaiClient.chat.completions.create({
       model: "gpt-4o",
       messages: [
         {

@@ -3,10 +3,12 @@ import { useLocation } from 'wouter';
 import { Card, CardContent } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { joinAgoraChannel, leaveAgoraChannel } from '@/lib/agora';
 import { submitAnswer, getInterview } from '@/lib/api';
 import { useToast } from '@/hooks/use-toast';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { AlertTriangle } from 'lucide-react';
 
 interface InterviewData {
   interviewId: number;
@@ -37,6 +39,23 @@ export default function InterviewSession() {
   const [questionLocked, setQuestionLocked] = useState(false);
   const [consentOpen, setConsentOpen] = useState(true);
   const [interviewCompleted, setInterviewCompleted] = useState(false);
+
+  // Add new state for focus monitoring
+  const [isInterviewActive, setIsInterviewActive] = useState(false);
+  const [focusViolations, setFocusViolations] = useState(0);
+  const [lastFocusTime, setLastFocusTime] = useState<number>(Date.now());
+  const focusTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const focusCheckIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Check if user is logged in
+  React.useEffect(() => {
+    const user = localStorage.getItem('user');
+    if (!user) {
+      // If not logged in, redirect to login page
+      setLocation('/login');
+      return;
+    }
+  }, [setLocation]);
 
   // Remove timer start on question change
   useEffect(() => {
@@ -189,16 +208,13 @@ export default function InterviewSession() {
           .then(candidates => {
             const candidate = candidates.find((c: any) => c.email === candidateEmail);
             if (candidate && candidate.invited) {
-              // Create new interview for invited candidate
-              const formData = new FormData();
-              formData.append('name', candidate.name || 'Invited Candidate');
-              formData.append('email', candidate.email);
-              formData.append('phone', candidate.phone || 'N/A');
-              formData.append('jobRole', candidate.jobRole || 'N/A');
-              
-              fetch('/api/interviews/start', {
+              // Create new interview for invited candidate using the dedicated endpoint
+              fetch('/api/interviews/start-invited', {
                 method: 'POST',
-                body: formData
+                headers: {
+                  'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ email: candidateEmail })
               })
               .then(res => res.json())
               .then(data => {
@@ -208,9 +224,9 @@ export default function InterviewSession() {
                     candidateId: data.candidateId,
                     questions: data.questions,
                     currentQuestionIndex: 0,
-                    candidateName: candidate.name || '',
-                    candidateRole: candidate.jobRole || '',
-                    candidatePhone: candidate.phone || '',
+                    candidateName: data.candidateName || candidate.name || '',
+                    candidateRole: data.candidateRole || candidate.jobRole || '',
+                    candidatePhone: data.candidatePhone || candidate.phone || '',
                   });
                   // Store interview data
                   sessionStorage.setItem('currentInterview', JSON.stringify({
@@ -244,7 +260,7 @@ export default function InterviewSession() {
             }
           })
           .catch(() => {
-            sessionStorage.clear();
+        sessionStorage.clear();
             setLocation('/upload');
           });
         return;
@@ -253,15 +269,17 @@ export default function InterviewSession() {
     const data = JSON.parse(stored);
     // Always fetch latest candidate info for display
     getInterview(Number(data.interviewId)).then(fresh => {
-      setInterviewData({
-        interviewId: fresh.interview.id,
-        candidateId: fresh.interview.candidateId,
-        questions: fresh.interview.questions.questions,
-        currentQuestionIndex: fresh.interview.currentQuestionIndex,
-        candidateName: fresh.candidate?.name || '',
-        candidateRole: fresh.candidate?.jobRole || '',
-        candidatePhone: fresh.candidate?.phone || '',
-      });
+      if (fresh.candidate) {
+        setInterviewData({
+          interviewId: fresh.interview.id,
+          candidateId: fresh.interview.candidateId,
+          questions: fresh.interview.questions.questions,
+          currentQuestionIndex: fresh.interview.currentQuestionIndex,
+          candidateName: fresh.candidate.name || '',
+          candidateRole: fresh.candidate.jobRole || '',
+          candidatePhone: fresh.candidate.phone || '',
+        });
+      }
     });
     // Set currentInterview only when session starts
     sessionStorage.setItem('currentInterview', JSON.stringify(data));
@@ -274,17 +292,17 @@ export default function InterviewSession() {
   const startAgora = async () => {
     if (!interviewData) return;
     const channel = `interview_${interviewData.interviewId}`;
-    await joinAgoraChannel(channel);
-    setJoined(true);
-    // Attach local video to DOM
-    setTimeout(() => {
-      const videoTrack = (window as any).AgoraRTC?.localTracks?.find((t: any) => t.trackMediaType === 'video');
-      if (videoTrack && videoRef.current) {
-        videoTrack.play(videoRef.current);
-      }
-    }, 500);
-    // Start transcription
-    startTranscription();
+      await joinAgoraChannel(channel);
+      setJoined(true);
+      // Attach local video to DOM
+      setTimeout(() => {
+        const videoTrack = (window as any).AgoraRTC?.localTracks?.find((t: any) => t.trackMediaType === 'video');
+        if (videoTrack && videoRef.current) {
+          videoTrack.play(videoRef.current);
+        }
+      }, 500);
+      // Start transcription
+      startTranscription();
   };
 
   const leaveAgora = async () => {
@@ -443,6 +461,200 @@ export default function InterviewSession() {
     }
   };
 
+  // Check for consent when component mounts
+  useEffect(() => {
+    const consent = localStorage.getItem('interviewConsent');
+    if (!consent) {
+      // Redirect to consent page if no consent
+      setLocation('/interview-consent', {
+        state: {
+          interviewToken: location.search ? new URLSearchParams(location.search).get('token') : undefined,
+          candidateName: interviewData?.candidateName,
+          jobRole: interviewData?.candidateRole
+        }
+      });
+      return;
+    }
+  }, [setLocation, location.search, interviewData]);
+
+  // Add focus monitoring useEffect
+  useEffect(() => {
+    if (!isInterviewActive) return;
+    
+    let focusLostTime: number | null = null;
+    let isPageHidden = false;
+    
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        // Page is hidden (tab switch or window minimize)
+        if (!isPageHidden) {
+          isPageHidden = true;
+          focusLostTime = Date.now();
+          console.log('Interview focus lost - page hidden');
+        }
+      } else {
+        // Page is visible again
+        if (isPageHidden && focusLostTime) {
+          const focusDuration = Date.now() - focusLostTime;
+          if (focusDuration > 2000) { // More than 2 seconds
+            setFocusViolations(prev => prev + 1);
+            console.log(`Focus violation detected: ${focusDuration}ms away from interview`);
+            
+            // Show warning toast
+            toast({
+              title: "⚠️ Focus Warning",
+              description: "Please stay focused on the interview. Multiple violations may result in interview termination.",
+              variant: "destructive",
+            });
+          }
+          isPageHidden = false;
+          focusLostTime = null;
+        }
+      }
+    };
+    
+    const handleWindowFocus = () => {
+      if (focusLostTime) {
+        const focusDuration = Date.now() - focusLostTime;
+        if (focusDuration > 2000) {
+          setFocusViolations(prev => prev + 1);
+          console.log(`Focus violation detected: ${focusDuration}ms away from interview`);
+          
+          toast({
+            title: "⚠️ Focus Warning",
+            description: "Please stay focused on the interview. Multiple violations may result in interview termination.",
+            variant: "destructive",
+          });
+        }
+        focusLostTime = null;
+      }
+    };
+    
+    const handleWindowBlur = () => {
+      if (!focusLostTime) {
+        focusLostTime = Date.now();
+        console.log('Interview focus lost - window blurred');
+      }
+    };
+    
+    // Set up focus monitoring
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', handleWindowFocus);
+    window.addEventListener('blur', handleWindowBlur);
+    
+    // Continuous focus monitoring
+    focusCheckIntervalRef.current = setInterval(() => {
+      if (document.hidden || !document.hasFocus()) {
+        if (!focusLostTime) {
+          focusLostTime = Date.now();
+        }
+      } else {
+        if (focusLostTime) {
+          const focusDuration = Date.now() - focusLostTime;
+          if (focusDuration > 2000) {
+            setFocusViolations(prev => prev + 1);
+            console.log(`Focus violation detected: ${focusDuration}ms away from interview`);
+            
+            toast({
+              title: "⚠️ Focus Warning",
+              description: "Please stay focused on the interview. Multiple violations may result in interview termination.",
+              variant: "destructive",
+            });
+          }
+          focusLostTime = null;
+        }
+      }
+    }, 1000);
+    
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleWindowFocus);
+      window.removeEventListener('blur', handleWindowBlur);
+      
+      if (focusCheckIntervalRef.current) {
+        clearInterval(focusCheckIntervalRef.current);
+      }
+    };
+      }, [isInterviewActive]);
+  
+  // Monitor focus violations and terminate interview if threshold exceeded
+  useEffect(() => {
+    if (focusViolations >= 3) {
+      // Terminate interview due to disciplinary action
+      handleInterviewTermination('disciplinary');
+    }
+  }, [focusViolations]);
+  
+  // Function to handle interview termination
+  const handleInterviewTermination = (reason: 'disciplinary' | 'normal' | 'error') => {
+    setIsInterviewActive(false);
+    
+    if (reason === 'disciplinary') {
+      // Show disciplinary action message
+      toast({
+        title: "🚫 Interview Terminated",
+        description: "Due to disciplinary action (multiple focus violations), the interview has been aborted.",
+        variant: "destructive",
+      });
+      
+      // Navigate to disciplinary page or show message
+      setTimeout(() => {
+        setLocation('/interview-terminated', { 
+          state: { 
+            reason: 'disciplinary',
+            message: 'Due to disciplinary action (multiple focus violations), the interview has been aborted.'
+          }
+        });
+      }, 3000);
+    } else if (reason === 'normal') {
+      // Normal interview completion
+      setLocation('/');
+    }
+  };
+  
+  // Update interview start to activate focus monitoring
+  const startInterview = async () => {
+    try {
+      setIsInterviewActive(true);
+      setLastFocusTime(Date.now());
+      
+      // ... existing interview start logic ...
+      
+    } catch (error) {
+      console.error('Error starting interview:', error);
+      toast({
+        title: "Error",
+        description: "Failed to start interview. Please try again.",
+        variant: "destructive",
+      });
+    }
+  };
+  
+  // Update interview end to deactivate focus monitoring
+  const endInterview = () => {
+    setIsInterviewActive(false);
+    setFocusViolations(0);
+    
+    // ... existing interview end logic ...
+    
+    handleInterviewTermination('normal');
+  };
+  
+  // Add focus violation display
+  const renderFocusWarning = () => {
+    if (focusViolations === 0) return null;
+    
+    return (
+      <Alert className="mb-4 border-orange-200 bg-orange-50">
+        <AlertTriangle className="h-4 w-4 text-orange-600" />
+        <AlertDescription className="text-orange-800">
+          <strong>Focus Warning:</strong> You have {focusViolations} focus violation(s). 
+          {focusViolations >= 2 && " One more violation will result in interview termination."}
+        </AlertDescription>
+      </Alert>
+    );
+  };
+
   if (!interviewData) {
     return <div>Loading...</div>;
   }
@@ -530,13 +742,18 @@ export default function InterviewSession() {
           <DialogFooter>
             <button
               className="bg-primary text-white px-4 py-2 rounded"
-              onClick={() => setConsentOpen(false)}
+              onClick={() => {
+                setConsentOpen(false);
+                setIsInterviewActive(true);
+                setLastFocusTime(Date.now());
+              }}
             >
               I Accept, Start Interview
             </button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      {renderFocusWarning()}
       <div className="mb-8">
         <div className="flex justify-between items-center mb-2">
           <h2 className="text-2xl font-bold text-gray-900">AI Interview in Progress</h2>
@@ -703,26 +920,26 @@ export default function InterviewSession() {
             </CardContent>
           </Card>
           {isAdmin && (
-            <Card>
-              <CardContent className="p-6">
-                <h4 className="font-medium text-gray-900 mb-4">Live Evaluation</h4>
-                <div className="space-y-4">
-                  <div className="text-center">
-                    <div className="text-2xl font-bold text-gray-900">{currentScore || '--'}</div>
-                    <div className="text-sm text-gray-600">Latest Score</div>
-                  </div>
-                  {latestFeedback && (
-                    <div className="bg-gray-50 rounded-lg p-3">
-                      <div className="text-xs text-gray-600 mb-1">Latest Feedback</div>
-                      <p className="text-sm text-gray-800">{latestFeedback}</p>
-                    </div>
-                  )}
+          <Card>
+            <CardContent className="p-6">
+              <h4 className="font-medium text-gray-900 mb-4">Live Evaluation</h4>
+              <div className="space-y-4">
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-gray-900">{currentScore || '--'}</div>
+                  <div className="text-sm text-gray-600">Latest Score</div>
                 </div>
-              </CardContent>
-            </Card>
+                {latestFeedback && (
+                  <div className="bg-gray-50 rounded-lg p-3">
+                    <div className="text-xs text-gray-600 mb-1">Latest Feedback</div>
+                    <p className="text-sm text-gray-800">{latestFeedback}</p>
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
           )}
         </div>
+              </div>
       </div>
-    </div>
   );
 }

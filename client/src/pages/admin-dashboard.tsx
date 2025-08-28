@@ -572,6 +572,15 @@ function CandidatesTable() {
 
   const handleSendInvite = async (candidate: any) => {
     try {
+      // Debug: Log the exact candidate data being sent
+      console.log('=== SENDING INVITATION DEBUG ===');
+      console.log('Candidate object received:', candidate);
+      console.log('Candidate ID:', candidate.id);
+      console.log('Candidate name:', candidate.name);
+      console.log('Candidate email:', candidate.email);
+      console.log('Candidate jobRole:', candidate.jobRole);
+      console.log('===============================');
+      
       // Call the backend API to send invitation
       const response = await fetch('/api/admin/send-interview-invite', {
         method: 'POST',
